@@ -1,0 +1,21 @@
+{
+  "name": "ofuq-visual-prototype",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "test:production": "npm run build && playwright test"
+  },
+  "dependencies": {
+    "@fontsource/cairo": "^5.2.6",
+    "@fontsource/noto-sans-arabic": "^5.2.6",
+    "katex": "^0.19.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "vite": "^6.3.5"
+  }
+}
