@@ -31,11 +31,70 @@ for (const [width, height] of sizes) {
     async function noOverflow() {
       expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
     }
+    async function checkContactBars() {
+      const bars = page.locator('.contact-strip');
+      await expect(bars).toHaveCount(2);
+      for (const [index, position] of ['top', 'bottom'].entries()) {
+        const bar = page.locator(`.contact-strip--${position}`);
+        const link = bar.locator('.contact-strip-link');
+        const number = link.locator('.contact-strip-number');
+        await expect(bar).toBeVisible();
+        await expect(bar).toHaveAttribute('dir', 'rtl');
+        await expect(bar).toHaveCSS('position', 'fixed');
+        await expect(bar.locator('.contact-strip-name')).toHaveText('المهندس سومر شاهين');
+        await expect(bar.locator('.contact-strip-name')).toHaveAttribute('dir', 'rtl');
+        await expect(bar.locator('.contact-strip-name')).toHaveCSS('direction', 'rtl');
+        await expect(number).toHaveText('0930215022');
+        await expect(number).toHaveAttribute('dir', 'ltr');
+        await expect(number).toHaveCSS('direction', 'ltr');
+        await expect(link).toHaveAttribute('href', 'https://wa.me/963930215022');
+        await expect(link).toHaveAttribute('target', '_blank');
+        await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+        await expect(bar.locator('.whatsapp-logo')).toHaveAttribute('aria-label', 'WhatsApp');
+        await expect(bar.locator('.whatsapp-logo path')).toHaveAttribute('d', /M17[.]472/);
+        await expect(bar).toHaveAttribute('aria-label', `شريط التواصل ${index === 0 ? 'العلوي' : 'السفلي'}`);
+      }
+      const destinations = await page.locator('.contact-strip-link').evaluateAll(links => links.map(link => {
+        const url = new URL(link.href);
+        return { protocol: url.protocol, hostname: url.hostname, pathname: url.pathname, search: url.search };
+      }));
+      expect(destinations).toEqual([
+        { protocol: 'https:', hostname: 'wa.me', pathname: '/963930215022', search: '' },
+        { protocol: 'https:', hostname: 'wa.me', pathname: '/963930215022', search: '' },
+      ]);
+      const reservedTopSpace = await page.evaluate(() => ({
+        headerDocumentTop: document.querySelector('.topbar').getBoundingClientRect().top + window.scrollY,
+        contactHeight: document.querySelector('.contact-strip--top').getBoundingClientRect().height,
+      }));
+      expect(reservedTopSpace.headerDocumentTop).toBeGreaterThanOrEqual(reservedTopSpace.contactHeight);
+    }
+    async function checkFixedContactBars() {
+      await page.evaluate(async () => {
+        window.scrollTo(0, document.documentElement.scrollHeight);
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      });
+      const geometry = await page.evaluate(() => ({
+        top: document.querySelector('.contact-strip--top').getBoundingClientRect().top,
+        bottom: document.querySelector('.contact-strip--bottom').getBoundingClientRect().bottom,
+        bottomBarTop: document.querySelector('.contact-strip--bottom').getBoundingClientRect().top,
+        viewportHeight: innerHeight,
+        footerBottom: document.querySelector('.footer').getBoundingClientRect().bottom,
+      }));
+      expect(geometry.top).toBe(0);
+      expect(geometry.bottom).toBe(geometry.viewportHeight);
+      expect(geometry.footerBottom).toBeLessThanOrEqual(geometry.bottomBarTop);
+      await page.evaluate(() => window.scrollTo(0, 0));
+    }
     async function go(name) {
       if (width <= 760) await page.locator('[data-action="menu"]').click();
       await page.locator(`.nav-item[data-page="${name}"]`).click();
+      await checkContactBars();
       await noOverflow();
     }
+
+    await checkContactBars();
+    await noOverflow();
+    await checkFixedContactBars();
     await noOverflow();
     await go('subjects');
     await expect(page.locator('.unified-subject')).toHaveCount(1);
@@ -47,6 +106,7 @@ for (const [width, height] of sizes) {
     for (let i = 0; i < stages.length; i++) {
       await page.locator(`[data-stage="${i}"]`).click();
       await expect(page.locator('.lesson-intro h2')).toHaveText(stages[i]);
+      await checkContactBars();
     }
     await expect(page.locator('.formula-example .katex-mathml')).toHaveCount(3);
     await expect(page.locator('.formula-example .mfrac')).toBeVisible();
@@ -55,8 +115,10 @@ for (const [width, height] of sizes) {
     await page.locator('[data-action="next"]').click();
     await expect(page.locator('.notebook-intro h2')).toHaveText('دفتر الطالب');
     await expect(page.locator('.notebook-block')).toHaveCount(6);
+    await checkContactBars();
     await noOverflow();
     await page.locator('[data-action="prev"]').click();
+    await checkContactBars();
     for (const direction of ['left', 'right']) {
       await page.locator(`[data-direction="${direction}"]`).click();
       for (const value of [1, 5]) {
