@@ -4,6 +4,7 @@ import {
   computeVersionHash,
   canonicalize,
   filterHashInputs,
+  isApprovalRecordPath,
   VERSION_HASH_INCLUDES,
   VERSION_HASH_EXCLUDES,
 } from '../../src/validate/version-hash.js';
@@ -41,14 +42,64 @@ test('hash changes when an image changes', () => {
   assert.notEqual(base, changed);
 });
 
+test('hash changes when a new content file is added', () => {
+  const base = computeVersionHash(files);
+  const extended = computeVersionHash([
+    ...files,
+    { path: 'src/content/coverage-l01.json', content: '{"items":[]}' },
+  ]);
+  assert.notEqual(base, extended);
+});
+
 test('approval records are excluded from the hash', () => {
   const base = computeVersionHash(files);
   const withApproval = computeVersionHash([
     ...files,
-    { path: 'src/content/approvals/l01-approval.json', content: '{"approved":true}' },
+    { path: 'src/content/approvals/l01.json', content: '{"approved":true}' },
   ]);
   assert.equal(base, withApproval);
   assert.equal(filterHashInputs([{ path: 'x/approval.json', content: '' }]).length, 0);
+});
+
+test('exclusion is precise: content files mentioning approval are included', () => {
+  assert.equal(isApprovalRecordPath('src/content/approvals/l01.json'), true);
+  assert.equal(isApprovalRecordPath('src/content/approval.json'), true);
+  assert.equal(isApprovalRecordPath('src/content/lesson-approval-overview.json'), false);
+  assert.equal(isApprovalRecordPath('src/content/approval-notes.json'), false);
+  const base = computeVersionHash(files);
+  const withContent = computeVersionHash([
+    ...files,
+    { path: 'src/content/lesson-approval-overview.json', content: '{"x":1}' },
+  ]);
+  assert.notEqual(base, withContent, 'content file must affect the hash');
+});
+
+test('missing inputs throw a clear error', () => {
+  assert.throws(() => computeVersionHash(null), TypeError);
+  assert.throws(() => computeVersionHash([{ path: 'a.json' }]), TypeError);
+  assert.throws(() => computeVersionHash([{ content: '{}' }]), TypeError);
+});
+
+test('duplicate paths throw a clear error', () => {
+  assert.throws(
+    () => computeVersionHash([
+      { path: 'a.json', content: '{}' },
+      { path: 'a.json', content: '{}' },
+    ]),
+    TypeError,
+  );
+});
+
+test('JSON key order and formatting do not affect the hash', () => {
+  const first = computeVersionHash([{ path: 'a.json', content: '{"b":1,"a":2}' }]);
+  const second = computeVersionHash([{ path: 'a.json', content: '{\n  "a": 2,\n  "b": 1\n}' }]);
+  assert.equal(first, second);
+});
+
+test('JSON value changes affect the hash', () => {
+  const first = computeVersionHash([{ path: 'a.json', content: '{"a":1}' }]);
+  const second = computeVersionHash([{ path: 'a.json', content: '{"a":2}' }]);
+  assert.notEqual(first, second);
 });
 
 test('canonicalize makes key order irrelevant', () => {

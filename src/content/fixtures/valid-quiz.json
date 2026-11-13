@@ -16,6 +16,15 @@
     }
   ],
   "authorizations": [
-    { "unitId": "u01", "lastLessonId": "l01", "authorizedBy": "صاحب المشروع", "authorizedAt": "2026-01-01" }
+    { "unitId": "u01", "lastLessonId": "l02", "authorizedBy": "صاحب المشروع", "authorizedAt": "2026-01-01" }
+  ],
+  "units": [
+    {
+      "unitId": "u01",
+      "lessons": [
+        { "id": "l01", "order": 1 },
+        { "id": "l02", "order": 2 }
+      ]
+    }
   ]
 }
