@@ -1,0 +1,12 @@
+{
+  "quizzes": [
+    {
+      "id": "u01-bad01",
+      "scope": "unit",
+      "lessonId": null,
+      "unitId": "u01",
+      "questions": [{ "id": "q1", "prompt": "سؤال افتراضي" }]
+    }
+  ],
+  "authorizations": []
+}

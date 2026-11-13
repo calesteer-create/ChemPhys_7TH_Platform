@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ContentBlock",
+  "description": "Task 004 foundation: single content unit. kind separates book content from explanation and enrichment. Narrative bodies are Markdown; verifiable structure is JSON. Every book block requires at least one traceable source; multiple sources are supported.",
+  "type": "object",
+  "required": ["id", "lessonId", "stageKey", "kind", "blockType", "sourceRefs"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "lessonId": { "type": "string", "minLength": 1 },
+    "stageKey": { "type": "string", "enum": ["orient", "discover", "labOrActivity", "understand", "apply", "selfTest", "summary"] },
+    "kind": { "type": "string", "enum": ["book", "explanation", "enrichment"] },
+    "blockType": {
+      "type": "string",
+      "enum": ["definition", "law", "example", "experiment", "figure", "equation", "note", "conclusion", "exercise", "activity", "narrative"]
+    },
+    "bodyMarkdown": {
+      "type": "string",
+      "description": "Narrative body in Markdown for long explanatory text. Empty only for purely structural blocks."
+    },
+    "sourceRefs": {
+      "type": "array",
+      "description": "Traceable sources. Required (>=1) when kind=book. Multiple sources allowed; no single-source assumption.",
+      "items": { "$ref": "#/$defs/SourceRef" }
+    },
+    "figureId": { "type": ["string", "null"] },
+    "equationId": { "type": ["string", "null"] },
+    "order": { "type": "integer", "minimum": 1 }
+  },
+  "$defs": {
+    "SourceRef": {
+      "type": "object",
+      "required": ["bookTitle", "page"],
+      "properties": {
+        "bookTitle": { "type": "string", "minLength": 1 },
+        "page": { "type": "integer", "minimum": 1 },
+        "figureOrQuestionNo": { "type": ["integer", "string", "null"] },
+        "unitTitle": { "type": ["string", "null"] },
+        "lessonTitle": { "type": ["string", "null"] },
+        "notes": { "type": "string" }
+      }
+    }
+  }
+}

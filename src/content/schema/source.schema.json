@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SourceInspection",
+  "description": "Task 004 foundation: per-page and per-figure inspection records. Sources are images stored in the repository; these JSON records document references and inspection status. Automated image triage (if any) is never approval of reading or interpretation; human inspection is authoritative.",
+  "type": "object",
+  "required": ["pages", "figures"],
+  "properties": {
+    "pages": { "type": "array", "items": { "$ref": "#/$defs/SourcePage" } },
+    "figures": { "type": "array", "items": { "$ref": "#/$defs/SourceFigure" } }
+  },
+  "$defs": {
+    "SourcePage": {
+      "type": "object",
+      "required": ["pageNo", "imagePath", "clarityStatus", "inspectedBy", "inspectedAt"],
+      "properties": {
+        "pageNo": { "type": "integer", "minimum": 1 },
+        "imagePath": { "type": "string", "minLength": 1 },
+        "clarityStatus": { "type": "string", "enum": ["clear", "unclear", "missing"] },
+        "issues": { "type": "array", "items": { "type": "string" } },
+        "inspectedBy": { "type": "string", "minLength": 1 },
+        "inspectedAt": { "type": "string", "minLength": 1 },
+        "essential": { "type": "boolean" }
+      }
+    },
+    "SourceFigure": {
+      "type": "object",
+      "required": ["figureNo", "pageNo", "clarityStatus", "inspectedBy", "inspectedAt"],
+      "properties": {
+        "figureNo": { "type": ["integer", "string"], "minLength": 1 },
+        "pageNo": { "type": "integer", "minimum": 1 },
+        "clarityStatus": { "type": "string", "enum": ["clear", "unclear", "missing"] },
+        "ambiguityNotes": { "type": "string" },
+        "inspectedBy": { "type": "string", "minLength": 1 },
+        "inspectedAt": { "type": "string", "minLength": 1 },
+        "essential": { "type": "boolean" }
+      }
+    }
+  }
+}

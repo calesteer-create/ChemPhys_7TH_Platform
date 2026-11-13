@@ -1,0 +1,38 @@
+{
+  "platform": { "id": "ofuq", "title": "أفق العلوم" },
+  "grades": [
+    {
+      "id": "g7",
+      "title": "الصف السابع",
+      "subjects": [
+        {
+          "id": "sci",
+          "title": "العلوم",
+          "units": [
+            {
+              "id": "u01",
+              "title": "وحدة افتراضية",
+              "order": 1,
+              "lessons": [
+                {
+                  "id": "l01",
+                  "title": "درس افتراضي",
+                  "order": 1,
+                  "stages": [
+                    { "stageKey": "orient", "blockIds": [], "activityKind": null },
+                    { "stageKey": "discover", "blockIds": [], "activityKind": null },
+                    { "stageKey": "labOrActivity", "blockIds": [], "activityKind": "activity" },
+                    { "stageKey": "understand", "blockIds": [], "activityKind": null },
+                    { "stageKey": "apply", "blockIds": [], "activityKind": null },
+                    { "stageKey": "selfTest", "blockIds": [], "activityKind": null },
+                    { "stageKey": "summary", "blockIds": [], "activityKind": null }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

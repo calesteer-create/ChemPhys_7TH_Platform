@@ -1,0 +1,14 @@
+[
+  {
+    "elementId": "l01-bad01",
+    "lessonId": "l01",
+    "elementType": "definition",
+    "referenceText": "وصف مرجعي افتراضي",
+    "sourceRefs": [],
+    "stageLocation": "understand",
+    "notebookLocation": null,
+    "verificationStatus": "uncovered",
+    "reviewNotes": "",
+    "subItems": []
+  }
+]

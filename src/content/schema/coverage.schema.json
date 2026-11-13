@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CoverageMatrix",
+  "description": "Task 004 foundation: coverage at element / info / skill level, not lesson-title level. Each item and sub-item has independent stage and notebook locations and verification status.",
+  "type": "object",
+  "required": ["items"],
+  "properties": {
+    "items": { "type": "array", "items": { "$ref": "#/$defs/CoverageItem" } }
+  },
+  "$defs": {
+    "CoverageItem": {
+      "type": "object",
+      "required": ["elementId", "lessonId", "elementType", "referenceText", "sourceRefs", "stageLocation", "verificationStatus"],
+      "properties": {
+        "elementId": { "type": "string", "minLength": 1 },
+        "lessonId": { "type": "string", "minLength": 1 },
+        "elementType": {
+          "type": "string",
+          "enum": ["definition", "law", "example", "experiment", "figure", "note", "conclusion", "exercise"]
+        },
+        "referenceText": { "type": "string", "minLength": 1 },
+        "sourceRefs": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Traceable sources; multiple allowed.",
+          "items": {
+            "type": "object",
+            "required": ["bookTitle", "page"],
+            "properties": {
+              "bookTitle": { "type": "string", "minLength": 1 },
+              "page": { "type": "integer", "minimum": 1 },
+              "figureOrQuestionNo": { "type": ["integer", "string", "null"] }
+            }
+          }
+        },
+        "stageLocation": { "type": "string", "enum": ["orient", "discover", "labOrActivity", "understand", "apply", "selfTest", "summary"] },
+        "notebookLocation": { "type": ["string", "null"] },
+        "verificationStatus": { "type": "string", "enum": ["uncovered", "covered", "verified"] },
+        "reviewNotes": { "type": "string" },
+        "subItems": { "type": "array", "items": { "$ref": "#/$defs/CoverageSubItem" } }
+      }
+    },
+    "CoverageSubItem": {
+      "type": "object",
+      "required": ["subId", "kind", "description", "stageLocation", "notebookRequired", "verificationStatus"],
+      "properties": {
+        "subId": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "enum": ["info", "skill"] },
+        "description": { "type": "string", "minLength": 1 },
+        "stageLocation": { "type": "string", "enum": ["orient", "discover", "labOrActivity", "understand", "apply", "selfTest", "summary"] },
+        "notebookLocation": { "type": ["string", "null"] },
+        "notebookRequired": { "type": "boolean" },
+        "verificationStatus": { "type": "string", "enum": ["uncovered", "covered", "verified"] }
+      }
+    }
+  }
+}

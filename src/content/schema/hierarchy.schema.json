@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EducationalHierarchy",
+  "description": "Task 004 foundation: Platform > Grade > Subject > Unit > Lesson > StageContent x7. Structural schema only; contains no curricular content.",
+  "type": "object",
+  "required": ["platform", "grades"],
+  "properties": {
+    "platform": {
+      "type": "object",
+      "required": ["id", "title"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 }
+      }
+    },
+    "grades": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/Grade" }
+    }
+  },
+  "$defs": {
+    "Grade": {
+      "type": "object",
+      "required": ["id", "title", "subjects"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "subjects": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Subject" } }
+      }
+    },
+    "Subject": {
+      "type": "object",
+      "required": ["id", "title", "units"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "units": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Unit" } }
+      }
+    },
+    "Unit": {
+      "type": "object",
+      "required": ["id", "title", "order", "lessons"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "order": { "type": "integer", "minimum": 1 },
+        "lessons": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Lesson" } }
+      }
+    },
+    "Lesson": {
+      "type": "object",
+      "required": ["id", "title", "order", "stages"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "order": { "type": "integer", "minimum": 1 },
+        "stages": { "type": "array", "minItems": 7, "maxItems": 7, "items": { "$ref": "#/$defs/StageContent" } }
+      }
+    },
+    "StageContent": {
+      "type": "object",
+      "required": ["stageKey", "blockIds"],
+      "properties": {
+        "stageKey": { "$ref": "#/$defs/StageKey" },
+        "blockIds": { "type": "array", "items": { "type": "string" } },
+        "activityKind": {
+          "type": ["string", "null"],
+          "enum": ["simulation", "activity", null],
+          "description": "Required only for labOrActivity: simulation or alternative exploratory activity. Null for other stages."
+        }
+      }
+    },
+    "StageKey": {
+      "type": "string",
+      "enum": ["orient", "discover", "labOrActivity", "understand", "apply", "selfTest", "summary"]
+    }
+  }
+}

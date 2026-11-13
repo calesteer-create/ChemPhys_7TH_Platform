@@ -1,0 +1,14 @@
+{
+  "pages": [
+    {
+      "pageNo": 10,
+      "imagePath": "assets/sources/page-10.jpg",
+      "clarityStatus": "unclear",
+      "issues": ["معادلة غير مقروءة"],
+      "inspectedBy": "فاحص افتراضي",
+      "inspectedAt": "2026-01-01",
+      "essential": true
+    }
+  ],
+  "figures": []
+}

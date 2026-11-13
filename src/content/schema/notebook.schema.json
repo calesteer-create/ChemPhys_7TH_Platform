@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NotebookDocument",
+  "description": "Task 004 foundation (schema only, no UI): independent student notebook artifact. Sections are dynamic per lesson (open sectionType set); a section renders iff it holds at least one required item. Items store full payloads, never pointers to stage content; tracesTo is audit-only.",
+  "type": "object",
+  "required": ["lessonId", "version", "sections"],
+  "properties": {
+    "lessonId": { "type": "string", "minLength": 1 },
+    "version": { "type": "integer", "minimum": 1 },
+    "sections": { "type": "array", "items": { "$ref": "#/$defs/NotebookSection" } }
+  },
+  "$defs": {
+    "LessonProfile": {
+      "type": "object",
+      "required": ["lessonId"],
+      "properties": {
+        "lessonId": { "type": "string", "minLength": 1 },
+        "hasLaws": { "type": "boolean" },
+        "hasExperiments": { "type": "boolean" },
+        "hasFigures": { "type": "boolean" },
+        "hasWorkedExamples": { "type": "boolean" },
+        "hasTables": { "type": "boolean" },
+        "hasSkills": { "type": "boolean" }
+      }
+    },
+    "NotebookSection": {
+      "type": "object",
+      "required": ["sectionType", "items"],
+      "properties": {
+        "sectionType": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Open set (e.g. definitions, laws, workedExamples, figures, tables, experiments, conclusions, warnings, skills). No fixed section list."
+        },
+        "items": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/NotebookItem" } }
+      }
+    },
+    "NotebookItem": {
+      "type": "object",
+      "required": ["itemId", "itemType", "payload", "tracesTo"],
+      "properties": {
+        "itemId": { "type": "string", "minLength": 1 },
+        "itemType": {
+          "type": "string",
+          "enum": ["definition", "law", "example", "figure", "table", "experiment", "conclusion", "warning", "skill"]
+        },
+        "payload": {
+          "type": "object",
+          "description": "Full self-contained content. Never a pointer to stage content.",
+          "properties": {
+            "statement": { "type": "string" },
+            "tex": { "type": "string" },
+            "symbols": { "type": "array", "items": { "type": "string" } },
+            "units": { "type": "array", "items": { "type": "string" } },
+            "conditions": { "type": "string" },
+            "steps": { "type": "array", "items": { "type": "string" } },
+            "figureId": { "type": "string" },
+            "caption": { "type": "string" },
+            "labels": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "tracesTo": {
+          "type": "array",
+          "minItems": 1,
+          "description": "CoverageSubItem ids this item satisfies. Audit-only; rendering never depends on it."
+        },
+        "order": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

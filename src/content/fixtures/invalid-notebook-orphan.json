@@ -1,0 +1,32 @@
+{
+  "notebook": {
+    "lessonId": "l01",
+    "version": 1,
+    "sections": [
+      {
+        "sectionType": "laws",
+        "items": [
+          {
+            "itemId": "l01-bad01",
+            "itemType": "law",
+            "payload": { "statement": "نص افتراضي", "tex": "x=1", "symbols": ["x"], "units": ["u"] },
+            "tracesTo": ["unknown-sub"],
+            "order": 1
+          }
+        ]
+      }
+    ]
+  },
+  "subItems": [
+    {
+      "subId": "l01-e01-s01",
+      "kind": "info",
+      "description": "وحدة افتراضية",
+      "stageLocation": "understand",
+      "notebookLocation": "laws",
+      "notebookRequired": true,
+      "verificationStatus": "covered"
+    }
+  ],
+  "profile": { "lessonId": "l01", "hasLaws": true }
+}

@@ -1,0 +1,24 @@
+{
+  "pages": [
+    {
+      "pageNo": 10,
+      "imagePath": "assets/sources/page-10.jpg",
+      "clarityStatus": "clear",
+      "issues": [],
+      "inspectedBy": "فاحص افتراضي",
+      "inspectedAt": "2026-01-01",
+      "essential": true
+    }
+  ],
+  "figures": [
+    {
+      "figureNo": 1,
+      "pageNo": 10,
+      "clarityStatus": "clear",
+      "ambiguityNotes": "",
+      "inspectedBy": "فاحص افتراضي",
+      "inspectedAt": "2026-01-01",
+      "essential": true
+    }
+  ]
+}
