@@ -1,0 +1,42 @@
+[
+  {
+    "lessonId": "l01",
+    "gate": "A-automated",
+    "versionHash": "__COMPUTED_HASH__",
+    "result": "pass",
+    "by": "ci",
+    "at": "2026-01-01",
+    "evidence": "unit tests",
+    "notes": ""
+  },
+  {
+    "lessonId": "l01",
+    "gate": "B-scientific",
+    "versionHash": "__COMPUTED_HASH__",
+    "result": "pass",
+    "by": "scientific-reviewer",
+    "at": "2026-01-01",
+    "evidence": "review log",
+    "notes": ""
+  },
+  {
+    "lessonId": "l01",
+    "gate": "B-notebook-educational",
+    "versionHash": "__COMPUTED_HASH__",
+    "result": "pass",
+    "by": "educational-reviewer",
+    "at": "2026-01-01",
+    "evidence": "notebook review",
+    "notes": ""
+  },
+  {
+    "lessonId": "l01",
+    "gate": "C-owner",
+    "versionHash": "__COMPUTED_HASH__",
+    "result": "approved",
+    "by": "project-owner",
+    "at": "2026-01-01",
+    "evidence": "owner approval",
+    "notes": ""
+  }
+]

@@ -5,25 +5,42 @@
       "scope": "lesson",
       "lessonId": "l01",
       "unitId": null,
-      "questions": [{ "id": "q1", "prompt": "سؤال افتراضي" }]
+      "questions": [
+        {
+          "id": "q1",
+          "prompt": "سؤال افتراضي"
+        }
+      ]
     },
     {
       "id": "u01-q01",
       "scope": "unit",
       "lessonId": null,
       "unitId": "u01",
-      "questions": [{ "id": "q1", "prompt": "سؤال افتراضي" }]
+      "questions": [
+        {
+          "id": "q1",
+          "prompt": "سؤال افتراضي"
+        }
+      ]
     }
   ],
   "authorizations": [
-    { "unitId": "u01", "lastLessonId": "l02", "authorizedBy": "صاحب المشروع", "authorizedAt": "2026-01-01" }
+    {
+      "unitId": "u01",
+      "lastLessonId": "l01",
+      "authorizedBy": "صاحب المشروع",
+      "authorizedAt": "2026-01-01"
+    }
   ],
   "units": [
     {
       "unitId": "u01",
       "lessons": [
-        { "id": "l01", "order": 1 },
-        { "id": "l02", "order": 2 }
+        {
+          "id": "l01",
+          "order": 1
+        }
       ]
     }
   ]

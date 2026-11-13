@@ -1,0 +1,18 @@
+{
+  "packageVersion": 1,
+  "lessonId": "l01",
+  "hashAlgorithmVersion": "1",
+  "schemaVersion": "1.0.0",
+  "files": {
+    "hierarchy": "src/content/fixtures/valid-hierarchy.json",
+    "blocks": "src/content/fixtures/valid-blocks.json",
+    "coverage": "src/content/fixtures/valid-coverage.json",
+    "sources": "src/content/fixtures/valid-sources.json",
+    "notebook": "src/content/fixtures/valid-notebook.json",
+    "quizzes": "src/content/fixtures/valid-package-quizzes.json",
+    "approvals": "src/content/approvals/approved-chain.json"
+  },
+  "images": [
+    "assets/fixtures/sample-figure.png"
+  ]
+}

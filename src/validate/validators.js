@@ -1,6 +1,12 @@
-// Task 004 validators: pure logic layer. No DOM, no rendering, no imports from
-// presentation code. Every function returns { valid, errors } and never throws
-// on malformed input (malformed input is reported as errors).
+// Task 004/005 validators: pure logic layer. No DOM, no rendering, no imports
+// from presentation code. Every function returns { valid, errors } and never
+// throws on malformed input (malformed input is reported as errors).
+//
+// Task 005 additions, all driven by explicit contract rules documented at the
+// call site: strict stage order (C12), complete notebook payload minima for all
+// nine item types (C11), duplicate scopes for elementId/subId/itemId and
+// tracesTo, unknown-key rejection for the contracts named below (never a
+// general schema-engine change), and lesson-scope existence checks.
 //
 // The seven JSON schemas under src/content/schema are the single source of
 // truth for structural constraints. A small built-in engine enforces type,
@@ -161,6 +167,8 @@ export function createValidators(schemas) {
     return map;
   }
 
+  // Task 005 C12: the seven stages must appear in the fixed order from the
+  // schema enum. A reordered list is rejected; membership alone is not enough.
   function validateHierarchy(hierarchy) {
     const errors = structuralErrors(hierarchy, schemas.hierarchy, schemas.hierarchy, '$');
     if (!hierarchy || typeof hierarchy !== 'object') return result(errors.length > 0 ? errors : ['hierarchy must be an object']);
@@ -178,6 +186,15 @@ export function createValidators(schemas) {
             if (keySet.size !== STAGE_KEYS.length || !STAGE_KEYS.every((k) => keySet.has(k))) {
               errors.push('lesson ' + lesson.id + ': stages must cover exactly the stage keys from the schema');
             }
+            // C12: fixed order, compared position by position.
+            keys.forEach((key, index) => {
+              if (STAGE_KEYS[index] !== key) {
+                errors.push(
+                  'lesson ' + lesson.id + ': stage order must be ' + STAGE_KEYS.join(' > ')
+                  + ' (position ' + (index + 1) + ' is ' + (key ?? 'missing') + ', expected ' + STAGE_KEYS[index] + ')',
+                );
+              }
+            });
             for (const stage of lesson.stages) {
               if (!stage || typeof stage !== 'object') continue;
               if (stage.stageKey === 'labOrActivity') {
@@ -245,7 +262,12 @@ export function createValidators(schemas) {
       if (blockById.has(block.id)) errors.push('duplicate block id in blocks: ' + block.id);
       blockById.set(block.id, block);
     });
-    const elementIds = new Set(items.map((i) => i?.elementId).filter(isNonEmptyString));
+    const elementIds = new Set();
+    for (const item of items) {
+      if (!item || typeof item !== 'object' || !isNonEmptyString(item.elementId)) continue;
+      if (elementIds.has(item.elementId)) errors.push('duplicate elementId: ' + item.elementId + ' (elementId must be unique across the lesson)');
+      elementIds.add(item.elementId);
+    }
 
     for (const block of blockList) {
       for (const elementId of Array.isArray(block?.coversElementIds) ? block.coversElementIds : []) {
@@ -326,6 +348,22 @@ export function createValidators(schemas) {
     const expectedPages = Array.isArray(expected?.pages) ? expected.pages : [];
     const expectedFigures = Array.isArray(expected?.figures) ? expected.figures : [];
 
+    const seenPages = new Set();
+    for (const page of allPages) {
+      if (page && Number.isInteger(page.pageNo)) {
+        if (seenPages.has(page.pageNo)) blockers.push('duplicate pageNo: ' + page.pageNo + ' (pageNo must be unique in the lesson package)');
+        seenPages.add(page.pageNo);
+      }
+    }
+    const seenFigures = new Set();
+    for (const figure of allFigures) {
+      if (figure && figure.figureNo !== undefined && figure.figureNo !== null) {
+        const key = String(figure.figureNo);
+        if (seenFigures.has(key)) blockers.push('duplicate figureNo: ' + key + ' (figureNo scope is global in the current contract)');
+        seenFigures.add(key);
+      }
+    }
+
     for (const page of allPages) {
       blockers.push(...structuralErrors(page, schemas.source.$defs.SourcePage, schemas.source, 'page ' + (page?.pageNo ?? '?')));
     }
@@ -375,10 +413,25 @@ export function createValidators(schemas) {
     return result(errors);
   }
 
+  // A non-empty array of non-empty strings. ["", ""] proves nothing, so blank
+  // entries are rejected, not just an empty array.
+  function isNonEmptyStringArray(value) {
+    return Array.isArray(value) && value.length > 0 && value.every(isNonEmptyString);
+  }
+
+  // Task 005 C11: minimum payload per notebook item type. The first four rules
+  // existed in Task 004 and are unchanged. The remaining five are the approved
+  // additions. A table rule checks labels only: it proves column labels exist,
+  // NOT that the table content, row count, cells, or cell-to-column relations
+  // are complete. No code or message may claim the full table was verified.
   function checkNotebookPayload(item, label, errors) {
     const payload = item.payload;
-    if (!payload || typeof payload !== 'object') {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
       errors.push(label + ': payload is required');
+      return;
+    }
+    if (Object.keys(payload).length === 0) {
+      errors.push(label + ': payload must not be empty');
       return;
     }
     switch (item.itemType) {
@@ -387,21 +440,36 @@ export function createValidators(schemas) {
         break;
       case 'law':
         if (!isNonEmptyString(payload.tex)) errors.push(label + ': law requires tex');
-        if (!Array.isArray(payload.symbols) || payload.symbols.length === 0) {
-          errors.push(label + ': law requires symbols');
-        }
-        if (!Array.isArray(payload.units) || payload.units.length === 0) {
-          errors.push(label + ': law requires units');
-        }
+        if (!isNonEmptyStringArray(payload.symbols)) errors.push(label + ': law requires symbols');
+        if (!isNonEmptyStringArray(payload.units)) errors.push(label + ': law requires units');
         break;
       case 'example':
-        if (!Array.isArray(payload.steps) || payload.steps.length === 0) {
-          errors.push(label + ': example requires steps');
-        }
+        if (!isNonEmptyStringArray(payload.steps)) errors.push(label + ': example requires steps');
         break;
       case 'figure':
         if (!isNonEmptyString(payload.figureId)) errors.push(label + ': figure requires figureId');
         if (!isNonEmptyString(payload.caption)) errors.push(label + ': figure requires caption');
+        break;
+      case 'table':
+        // Minimum only: labels exist and are not blank. This does NOT verify
+        // rows, cells, or cell-to-column relations.
+        if (!isNonEmptyStringArray(payload.labels)) errors.push(label + ': table requires labels (minimum only: table content is not verified)');
+        break;
+      case 'experiment':
+        if (!isNonEmptyStringArray(payload.steps)) errors.push(label + ': experiment requires steps');
+        break;
+      case 'conclusion':
+        if (!isNonEmptyString(payload.statement)) errors.push(label + ': conclusion requires statement');
+        break;
+      case 'warning':
+        if (!isNonEmptyString(payload.statement)) errors.push(label + ': warning requires statement');
+        break;
+      case 'skill':
+        // A skill may be described (statement) or procedural (steps); neither
+        // is forced, but at least one must be present and non-empty.
+        if (!isNonEmptyString(payload.statement) && !isNonEmptyStringArray(payload.steps)) {
+          errors.push(label + ': skill requires statement or steps');
+        }
         break;
       default:
         break;
@@ -415,28 +483,58 @@ export function createValidators(schemas) {
       errors.push(...validateLessonProfile(profile).errors);
     }
 
+    // subId is unique across the whole lesson. The caller passes the lesson's
+    // coverage sub-items; a repeated subId would make tracesTo ambiguous.
     const requiredSubs = new Map();
+    const knownSubs = new Set();
+    const subById = new Map();
     for (const sub of Array.isArray(subItems) ? subItems : []) {
+      if (!sub || typeof sub !== 'object') continue;
+      if (isNonEmptyString(sub.subId)) {
+        if (knownSubs.has(sub.subId)) errors.push('duplicate subId: ' + sub.subId + ' (subId must be unique across the lesson)');
+        knownSubs.add(sub.subId);
+        subById.set(sub.subId, sub);
+      }
       if (sub?.notebookRequired === true) requiredSubs.set(sub.subId, sub);
     }
-    const knownSubs = new Set((Array.isArray(subItems) ? subItems : []).map((s) => s?.subId));
     const traced = new Set();
+    const itemIds = new Set();
 
     for (const section of Array.isArray(notebook.sections) ? notebook.sections : []) {
-      const sectionLabel = 'section ' + (section?.sectionType ?? '?');
       if (!section || typeof section !== 'object') continue;
       for (const item of Array.isArray(section.items) ? section.items : []) {
-        const label = 'item ' + (item?.itemId ?? '?');
         if (!item || typeof item !== 'object') continue;
+        const label = 'item ' + (item?.itemId ?? '?');
+        // itemId is unique across the whole notebook.
+        if (isNonEmptyString(item.itemId)) {
+          if (itemIds.has(item.itemId)) errors.push('duplicate itemId: ' + item.itemId + ' (itemId must be unique across the notebook)');
+          itemIds.add(item.itemId);
+        }
         if (!Array.isArray(item.tracesTo) || item.tracesTo.length === 0) {
           errors.push(label + ': tracesTo must reference at least one coverage sub-item');
         } else {
+          const seenInItem = new Set();
           for (const subId of item.tracesTo) {
+            if (seenInItem.has(subId)) errors.push(label + ': repeated tracesTo ' + subId + ' (each sub-item may be traced once per item)');
+            seenInItem.add(subId);
             if (!knownSubs.has(subId)) errors.push(label + ': unknown tracesTo ' + subId + ' (orphan)');
             else traced.add(subId);
           }
         }
         checkNotebookPayload(item, label, errors);
+        // Relational completeness: a declared notebookLocation must be honoured
+        // by an item traced in a section of that same type. Dynamic sections are
+        // preserved: no fixed section list is imposed, only consistency.
+        const foundSectionType = section?.sectionType;
+        for (const subId of Array.isArray(item.tracesTo) ? item.tracesTo : []) {
+          const sub = subById.get(subId);
+          if (sub && isNonEmptyString(sub.notebookLocation) && foundSectionType !== sub.notebookLocation) {
+            errors.push(
+              label + ': traces ' + subId + ' which declares notebookLocation '
+              + JSON.stringify(sub.notebookLocation) + ' but sits in section ' + JSON.stringify(foundSectionType ?? '?'),
+            );
+          }
+        }
       }
     }
 
@@ -444,6 +542,8 @@ export function createValidators(schemas) {
       if (!traced.has(subId)) errors.push('required sub-item ' + subId + ' has no notebook item');
     }
 
+    // A required sub-item is only complete when the tracing item carries a real
+    // payload for its type; tracing alone is not documentation.
     if (profile && profile.hasLaws === true) {
       const hasLawsSection = (Array.isArray(notebook.sections) ? notebook.sections : []).some((s) => s?.sectionType === 'laws');
       const hasRequiredLaw = [...requiredSubs.values()].some(

@@ -1,0 +1,36 @@
+{
+  "quizzes": [
+    {
+      "id": "l01-q01",
+      "scope": "lesson",
+      "lessonId": "l01",
+      "unitId": null,
+      "questions": [
+        {
+          "id": "q1",
+          "prompt": "سؤال افتراضي"
+        }
+      ]
+    },
+    {
+      "id": "u01-q01",
+      "scope": "unit",
+      "lessonId": null,
+      "unitId": "u01",
+      "questions": [
+        {
+          "id": "q1",
+          "prompt": "سؤال افتراضي"
+        }
+      ]
+    }
+  ],
+  "authorizations": [
+    {
+      "unitId": "u01",
+      "lastLessonId": "l01",
+      "authorizedBy": "صاحب المشروع",
+      "authorizedAt": "2026-01-01"
+    }
+  ]
+}
