@@ -218,13 +218,34 @@ export function createValidators(schemas) {
     const uncovered = [];
     if (!Array.isArray(items)) return { valid: false, errors: ['items must be an array'], uncovered };
     errors.push(...structuralErrors({ items }, schemas.coverage, schemas.coverage, '$'));
-    const blockList = Array.isArray(blocks) ? blocks : [];
-    const blockById = new Map();
-    for (const block of blockList) {
-      if (block && isNonEmptyString(block.id)) blockById.set(block.id, block);
+    // blocks and hierarchy are MANDATORY inputs. Coverage is only proven when each
+    // treatment block really exists in the lesson's actual stage structure, so a
+    // missing/invalid hierarchy or a non-array block list is an error, never a
+    // silently skipped check.
+    if (!Array.isArray(blocks)) {
+      errors.push('blocks must be an array');
+      return { valid: false, errors, uncovered };
     }
+    const hierarchyCheck = validateHierarchy(hierarchy);
+    const hierarchyUsable = hierarchyCheck.valid;
+    if (!hierarchyUsable) {
+      errors.push('hierarchy is required and must be a valid lesson hierarchy: ' + (hierarchyCheck.errors[0] ?? 'invalid hierarchy'));
+    }
+    const blockList = blocks;
+    const blockById = new Map();
+    blockList.forEach((block, index) => {
+      if (!block || typeof block !== 'object' || Array.isArray(block)) {
+        errors.push('blocks[' + index + '] must be an object with a non-empty id');
+        return;
+      }
+      if (!isNonEmptyString(block.id)) {
+        errors.push('blocks[' + index + '] must have a non-empty id');
+        return;
+      }
+      if (blockById.has(block.id)) errors.push('duplicate block id in blocks: ' + block.id);
+      blockById.set(block.id, block);
+    });
     const elementIds = new Set(items.map((i) => i?.elementId).filter(isNonEmptyString));
-    const stageMap = hierarchy ? findLessonStageMap(hierarchy, null) : null;
 
     for (const block of blockList) {
       for (const elementId of Array.isArray(block?.coversElementIds) ? block.coversElementIds : []) {
@@ -261,7 +282,7 @@ export function createValidators(schemas) {
       const allowedStages = Array.isArray(item.stageLocations) && item.stageLocations.length > 0
         ? item.stageLocations
         : [item.stageLocation];
-      const lessonStageMap = hierarchy ? findLessonStageMap(hierarchy, item.lessonId) : null;
+      const lessonStageMap = findLessonStageMap(hierarchy, item.lessonId);
       for (const blockId of item.blockIds) {
         const block = blockById.get(blockId);
         if (!block) {
@@ -277,7 +298,7 @@ export function createValidators(schemas) {
         if (!allowedStages.includes(block.stageKey)) {
           errors.push(label + ': block ' + blockId + ' stage ' + block.stageKey + ' does not match declared stage locations');
         }
-        if (lessonStageMap) {
+        if (hierarchyUsable) {
           if (!lessonStageMap.has(blockId)) {
             errors.push(label + ': block ' + blockId + ' is not in the lesson hierarchy');
           } else if (lessonStageMap.get(blockId) !== block.stageKey) {
@@ -508,15 +529,38 @@ export function createValidators(schemas) {
     const errors = [];
     if (!Array.isArray(records)) return result(['records must be an array']);
     const present = new Set();
+    const gateCounts = new Map();
+    const lessonIds = new Set();
     for (const record of records) {
       errors.push(...validateApprovalRecord(record, computedHash).errors);
-      if (record && APPROVAL_GATES.includes(record.gate)) {
+      if (!record || typeof record !== 'object') continue;
+      if (isNonEmptyString(record.gate)) {
+        gateCounts.set(record.gate, (gateCounts.get(record.gate) ?? 0) + 1);
+      }
+      // Every record in one chain must carry the same non-empty lessonId. A
+      // matching versionHash alone does not prove the gates belong to the lesson.
+      if (isNonEmptyString(record.lessonId)) {
+        lessonIds.add(record.lessonId);
+      } else {
+        errors.push('approval record: lessonId is required and must be a non-empty string');
+      }
+      if (APPROVAL_GATES.includes(record.gate)) {
         present.add(record.gate);
         const required = REQUIRED_RESULTS[record.gate];
         if (required && record.result !== required) {
           errors.push('gate ' + record.gate + ' did not pass (result ' + (record.result ?? 'missing') + ', required ' + required + ')');
         }
       }
+    }
+    // Each gate type may appear exactly once: a duplicate can never stand in for
+    // a missing gate, and duplicates are rejected even when both are valid.
+    for (const [gate, count] of gateCounts) {
+      if (count > 1) {
+        errors.push('duplicate gate record: ' + gate + ' appears ' + count + ' times (each gate must appear exactly once)');
+      }
+    }
+    if (lessonIds.size > 1) {
+      errors.push('approval chain must belong to a single lesson (found lessonIds: ' + [...lessonIds].join(', ') + ')');
     }
     for (const gate of MANDATORY_GATES) {
       if (!present.has(gate)) errors.push('mandatory gate missing: ' + gate);
