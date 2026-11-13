@@ -92,10 +92,20 @@ test('duplicate paths throw a clear error', () => {
   );
 });
 
-test('JSON key order and formatting do not affect the hash', () => {
+// Task 005: raw bytes are hashed, so a formatting-only change is a new version
+// and invalidates earlier approvals on purpose. This replaces the Task 004 test
+// that asserted the opposite behaviour.
+test('JSON formatting changes produce a different hash (raw bytes are hashed)', () => {
   const first = computeVersionHash([{ path: 'a.json', content: '{"b":1,"a":2}' }]);
   const second = computeVersionHash([{ path: 'a.json', content: '{\n  "a": 2,\n  "b": 1\n}' }]);
-  assert.equal(first, second);
+  assert.notEqual(first, second);
+});
+
+// A change that is only key order (same formatting) is also a different version.
+test('JSON key order changes produce a different hash', () => {
+  const first = computeVersionHash([{ path: 'a.json', content: '{"a":2,"b":1}' }]);
+  const second = computeVersionHash([{ path: 'a.json', content: '{"b":1,"a":2}' }]);
+  assert.notEqual(first, second);
 });
 
 test('JSON value changes affect the hash', () => {
