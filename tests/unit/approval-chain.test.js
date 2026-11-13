@@ -96,3 +96,46 @@ test('recording approval does not change the approved content hash', () => {
   ]);
   assert.equal(hash, withApproval);
 });
+
+test('approval chain fails when automated gate fails', () => {
+  const hash = computeVersionHash(contentFiles());
+  const chain = completeChain(hash).map((r) => (r.gate === 'A-automated' ? { ...r, result: 'fail' } : r));
+  const result = validateApprovalChain(chain, hash);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes('A-automated did not pass')));
+});
+
+test('approval chain fails when scientific gate is rejected', () => {
+  const hash = computeVersionHash(contentFiles());
+  const chain = completeChain(hash).map((r) => (r.gate === 'B-scientific' ? { ...r, result: 'rejected' } : r));
+  const result = validateApprovalChain(chain, hash);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes('B-scientific did not pass')));
+});
+
+test('approval chain fails when owner gate is rejected', () => {
+  const hash = computeVersionHash(contentFiles());
+  const chain = completeChain(hash).map((r) => (r.gate === 'C-owner' ? { ...r, result: 'rejected' } : r));
+  const result = validateApprovalChain(chain, hash);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes('C-owner did not pass')));
+});
+
+test('approval chain fails when a gate result is missing', () => {
+  const hash = computeVersionHash(contentFiles());
+  const chain = completeChain(hash).map((r) => {
+    if (r.gate !== 'C-owner') return r;
+    const copy = { ...r };
+    delete copy.result;
+    return copy;
+  });
+  const result = validateApprovalChain(chain, hash);
+  assert.equal(result.valid, false);
+});
+
+test('approval chain fails when a gate result is unknown', () => {
+  const hash = computeVersionHash(contentFiles());
+  const chain = completeChain(hash).map((r) => (r.gate === 'C-owner' ? { ...r, result: 'pending' } : r));
+  const result = validateApprovalChain(chain, hash);
+  assert.equal(result.valid, false);
+});

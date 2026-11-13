@@ -143,13 +143,13 @@ export function createValidators(schemas) {
 
   function findLessonStageMap(hierarchy, lessonId) {
     const map = new Map();
-    for (const grade of hierarchy?.grades ?? []) {
-      for (const subject of grade?.subjects ?? []) {
-        for (const unit of subject?.units ?? []) {
-          for (const lesson of unit?.lessons ?? []) {
+    for (const grade of Array.isArray(hierarchy?.grades) ? hierarchy.grades : []) {
+      for (const subject of Array.isArray(grade?.subjects) ? grade.subjects : []) {
+        for (const unit of Array.isArray(subject?.units) ? subject.units : []) {
+          for (const lesson of Array.isArray(unit?.lessons) ? unit.lessons : []) {
             if (lesson?.id === lessonId) {
-              for (const stage of lesson.stages ?? []) {
-                for (const blockId of stage?.blockIds ?? []) {
+              for (const stage of Array.isArray(lesson.stages) ? lesson.stages : []) {
+                for (const blockId of Array.isArray(stage?.blockIds) ? stage.blockIds : []) {
                   map.set(blockId, stage.stageKey);
                 }
               }
@@ -165,10 +165,10 @@ export function createValidators(schemas) {
     const errors = structuralErrors(hierarchy, schemas.hierarchy, schemas.hierarchy, '$');
     if (!hierarchy || typeof hierarchy !== 'object') return result(errors.length > 0 ? errors : ['hierarchy must be an object']);
     const lessonIds = new Set();
-    for (const grade of hierarchy.grades ?? []) {
-      for (const subject of grade?.subjects ?? []) {
-        for (const unit of subject?.units ?? []) {
-          for (const lesson of unit?.lessons ?? []) {
+    for (const grade of Array.isArray(hierarchy.grades) ? hierarchy.grades : []) {
+      for (const subject of Array.isArray(grade?.subjects) ? grade.subjects : []) {
+        for (const unit of Array.isArray(subject?.units) ? subject.units : []) {
+          for (const lesson of Array.isArray(unit?.lessons) ? unit.lessons : []) {
             if (!lesson || !isNonEmptyString(lesson.id)) continue;
             if (lessonIds.has(lesson.id)) errors.push('duplicate lesson id: ' + lesson.id);
             lessonIds.add(lesson.id);
@@ -227,7 +227,7 @@ export function createValidators(schemas) {
     const stageMap = hierarchy ? findLessonStageMap(hierarchy, null) : null;
 
     for (const block of blockList) {
-      for (const elementId of block?.coversElementIds ?? []) {
+      for (const elementId of Array.isArray(block?.coversElementIds) ? block.coversElementIds : []) {
         if (!elementIds.has(elementId)) {
           errors.push('block ' + (block.id ?? '?') + ': references unknown element ' + elementId);
         }
@@ -241,7 +241,7 @@ export function createValidators(schemas) {
         uncovered.push(item.elementId);
         errors.push(label + ' is uncovered (incomplete coverage)');
       }
-      for (const sub of item.subItems ?? []) {
+      for (const sub of Array.isArray(item.subItems) ? item.subItems : []) {
         if (sub?.verificationStatus === 'uncovered') {
           uncovered.push(sub.subId);
           errors.push('sub ' + (sub?.subId ?? '?') + ' is uncovered (incomplete coverage)');
@@ -271,7 +271,7 @@ export function createValidators(schemas) {
         if (block.lessonId !== item.lessonId) {
           errors.push(label + ': block ' + blockId + ' belongs to a different lesson');
         }
-        if (!(block.coversElementIds ?? []).includes(item.elementId)) {
+        if (!(Array.isArray(block.coversElementIds) ? block.coversElementIds : []).includes(item.elementId)) {
           errors.push(label + ': block ' + blockId + ' does not treat this element');
         }
         if (!allowedStages.includes(block.stageKey)) {
@@ -286,7 +286,7 @@ export function createValidators(schemas) {
         }
       }
       for (const block of blockList) {
-        if ((block?.coversElementIds ?? []).includes(item.elementId) && !item.blockIds.includes(block.id)) {
+        if ((Array.isArray(block?.coversElementIds) ? block.coversElementIds : []).includes(item.elementId) && !item.blockIds.includes(block.id)) {
           errors.push(label + ': block ' + block.id + ' claims to treat this element but is not listed');
         }
       }
@@ -395,16 +395,16 @@ export function createValidators(schemas) {
     }
 
     const requiredSubs = new Map();
-    for (const sub of subItems ?? []) {
+    for (const sub of Array.isArray(subItems) ? subItems : []) {
       if (sub?.notebookRequired === true) requiredSubs.set(sub.subId, sub);
     }
-    const knownSubs = new Set((subItems ?? []).map((s) => s?.subId));
+    const knownSubs = new Set((Array.isArray(subItems) ? subItems : []).map((s) => s?.subId));
     const traced = new Set();
 
-    for (const section of notebook.sections ?? []) {
+    for (const section of Array.isArray(notebook.sections) ? notebook.sections : []) {
       const sectionLabel = 'section ' + (section?.sectionType ?? '?');
       if (!section || typeof section !== 'object') continue;
-      for (const item of section.items ?? []) {
+      for (const item of Array.isArray(section.items) ? section.items : []) {
         const label = 'item ' + (item?.itemId ?? '?');
         if (!item || typeof item !== 'object') continue;
         if (!Array.isArray(item.tracesTo) || item.tracesTo.length === 0) {
@@ -424,7 +424,7 @@ export function createValidators(schemas) {
     }
 
     if (profile && profile.hasLaws === true) {
-      const hasLawsSection = (notebook.sections ?? []).some((s) => s?.sectionType === 'laws');
+      const hasLawsSection = (Array.isArray(notebook.sections) ? notebook.sections : []).some((s) => s?.sectionType === 'laws');
       const hasRequiredLaw = [...requiredSubs.values()].some(
         (s) => s.notebookLocation === 'laws',
       );
@@ -497,13 +497,26 @@ export function createValidators(schemas) {
   // and is not required for the approval chain itself.
   const MANDATORY_GATES = ['A-automated', 'B-scientific', 'B-notebook-educational', 'C-owner'];
 
+  const REQUIRED_RESULTS = {
+    'A-automated': 'pass',
+    'B-scientific': 'pass',
+    'B-notebook-educational': 'pass',
+    'C-owner': 'approved',
+  };
+
   function validateApprovalChain(records, computedHash) {
     const errors = [];
     if (!Array.isArray(records)) return result(['records must be an array']);
     const present = new Set();
     for (const record of records) {
       errors.push(...validateApprovalRecord(record, computedHash).errors);
-      if (record && APPROVAL_GATES.includes(record.gate)) present.add(record.gate);
+      if (record && APPROVAL_GATES.includes(record.gate)) {
+        present.add(record.gate);
+        const required = REQUIRED_RESULTS[record.gate];
+        if (required && record.result !== required) {
+          errors.push('gate ' + record.gate + ' did not pass (result ' + (record.result ?? 'missing') + ', required ' + required + ')');
+        }
+      }
     }
     for (const gate of MANDATORY_GATES) {
       if (!present.has(gate)) errors.push('mandatory gate missing: ' + gate);
@@ -524,6 +537,7 @@ export function createValidators(schemas) {
     ACTIVITY_KINDS,
     NOTEBOOK_ITEM_TYPES,
     MANDATORY_GATES,
+    REQUIRED_RESULTS,
     validateHierarchy,
     validateContentBlock,
     validateCoverage,
@@ -550,6 +564,7 @@ export const QUIZ_SCOPES = defaultValidators.QUIZ_SCOPES;
 export const ACTIVITY_KINDS = defaultValidators.ACTIVITY_KINDS;
 export const NOTEBOOK_ITEM_TYPES = defaultValidators.NOTEBOOK_ITEM_TYPES;
 export const MANDATORY_GATES = defaultValidators.MANDATORY_GATES;
+export const REQUIRED_RESULTS = defaultValidators.REQUIRED_RESULTS;
 export const validateHierarchy = defaultValidators.validateHierarchy;
 export const validateContentBlock = defaultValidators.validateContentBlock;
 export const validateCoverage = defaultValidators.validateCoverage;
