@@ -18,39 +18,75 @@ import {
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const fixture = (name) => JSON.parse(readFileSync(join(root, 'src/content/fixtures', name), 'utf8'));
+const hierarchy = () => fixture('valid-hierarchy.json');
+const blocks = () => fixture('valid-blocks.json');
+const coverage = () => fixture('valid-coverage.json');
 
-test('changing a schema constraint changes validation results', () => {
+test('changing an enum constraint in the schema changes validation results', () => {
   const schemas = loadSchemas();
   const block = fixture('valid-blocks.json')[0];
   assert.equal(validateContentBlock(block).valid, true);
   const mutated = structuredClone(schemas);
-  mutated.hierarchy.$defs.StageKey.enum = mutated.hierarchy.$defs.StageKey.enum.filter((k) => k !== 'understand');
+  mutated.contentBlock.properties.stageKey.enum = mutated.contentBlock.properties.stageKey.enum.filter((k) => k !== 'understand');
   const strict = createValidators(mutated);
   const result = strict.validateContentBlock(block);
   assert.equal(result.valid, false);
-  assert.ok(result.errors.some((e) => e.includes('stageKey is invalid')));
+  assert.ok(result.errors.some((e) => e.includes('must be one of')));
+});
+
+test('changing a type constraint in the schema changes validation results', () => {
+  const schemas = loadSchemas();
+  const block = fixture('valid-blocks.json')[0];
+  const mutated = structuredClone(schemas);
+  mutated.contentBlock.properties.order.type = 'string';
+  const strict = createValidators(mutated);
+  const result = strict.validateContentBlock(block);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes('must be string')));
+});
+
+test('changing a minItems constraint in the schema changes validation results', () => {
+  const schemas = loadSchemas();
+  const block = fixture('valid-blocks.json')[0];
+  const mutated = structuredClone(schemas);
+  mutated.contentBlock.properties.sourceRefs.minItems = 99;
+  const strict = createValidators(mutated);
+  const result = strict.validateContentBlock(block);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes('at least 99 items')));
+});
+
+test('notebook schema drives notebook validation', () => {
+  const data = fixture('valid-notebook.json');
+  assert.equal(validateNotebook(data.notebook, data.subItems, data.profile).valid, true);
+  const schemas = loadSchemas();
+  const mutated = structuredClone(schemas);
+  mutated.notebook.$defs.NotebookItem.properties.itemType.enum = ['definition'];
+  const strict = createValidators(mutated);
+  const result = strict.validateNotebook(data.notebook, data.subItems, data.profile);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes('must be one of')));
 });
 
 test('valid hierarchy passes', () => {
-  const result = validateHierarchy(fixture('valid-hierarchy.json'));
+  const result = validateHierarchy(hierarchy());
   assert.equal(result.valid, true, result.errors.join('; '));
 });
 
 test('hierarchy with missing stage fails', () => {
-  const hierarchy = fixture('valid-hierarchy.json');
-  hierarchy.grades[0].subjects[0].units[0].lessons[0].stages.pop();
-  const result = validateHierarchy(hierarchy);
+  const data = hierarchy();
+  data.grades[0].subjects[0].units[0].lessons[0].stages.pop();
+  const result = validateHierarchy(data);
   assert.equal(result.valid, false);
-  assert.ok(result.errors.some((e) => e.includes('exactly 7')));
+  assert.ok(result.errors.some((e) => e.includes('at least 7 items') || e.includes('exactly')));
 });
 
 test('valid blocks pass, including multi-source book block', () => {
-  const blocks = fixture('valid-blocks.json');
-  for (const block of blocks) {
+  for (const block of blocks()) {
     const result = validateContentBlock(block);
     assert.equal(result.valid, true, block.id + ': ' + result.errors.join('; '));
   }
-  const bookBlock = blocks.find((b) => b.kind === 'book');
+  const bookBlock = blocks().find((b) => b.kind === 'book');
   assert.ok(bookBlock.sourceRefs.length >= 2, 'book block must carry multiple sources');
 });
 
@@ -61,13 +97,13 @@ test('book block without source fails', () => {
 });
 
 test('valid coverage passes with linked treatment blocks', () => {
-  const result = validateCoverage(fixture('valid-coverage.json'), fixture('valid-blocks.json'));
+  const result = validateCoverage(coverage(), blocks(), hierarchy());
   assert.equal(result.valid, true, result.errors.join('; '));
   assert.deepEqual(result.uncovered, []);
 });
 
 test('coverage gap fails specifically because the element is uncovered', () => {
-  const result = validateCoverage(fixture('invalid-coverage-gap.json'), fixture('valid-blocks.json'));
+  const result = validateCoverage(fixture('invalid-coverage-gap.json'), blocks(), hierarchy());
   assert.equal(result.valid, false);
   assert.ok(result.uncovered.includes('l01-bad01'));
   assert.ok(result.errors.some((e) => e.includes('uncovered') && e.includes('l01-bad01')));
@@ -78,34 +114,77 @@ test('coverage gap fails specifically because the element is uncovered', () => {
 });
 
 test('covered element without treatment blocks is rejected', () => {
-  const items = structuredClone(fixture('valid-coverage.json'));
+  const items = structuredClone(coverage());
   items[0].blockIds = [];
-  const result = validateCoverage(items, fixture('valid-blocks.json'));
+  const result = validateCoverage(items, blocks(), hierarchy());
   assert.equal(result.valid, false);
   assert.ok(result.errors.some((e) => e.includes('at least one treatment block')));
 });
 
 test('covered element with missing block reference is rejected', () => {
-  const items = structuredClone(fixture('valid-coverage.json'));
+  const items = structuredClone(coverage());
   items[0].blockIds = ['missing-block'];
-  const result = validateCoverage(items, fixture('valid-blocks.json'));
+  const result = validateCoverage(items, blocks(), hierarchy());
   assert.equal(result.valid, false);
   assert.ok(result.errors.some((e) => e.includes('references missing block')));
 });
 
 test('existing block that does not treat the element is rejected', () => {
-  const items = structuredClone(fixture('valid-coverage.json'));
+  const items = structuredClone(coverage());
   items[0].blockIds = ['l01-b03'];
   items[0].stageLocations = ['summary'];
-  const result = validateCoverage(items, fixture('valid-blocks.json'));
+  const result = validateCoverage(items, blocks(), hierarchy());
   assert.equal(result.valid, false);
   assert.ok(result.errors.some((e) => e.includes('does not treat this element')));
 });
 
+test('block referencing an unknown element is rejected', () => {
+  const allBlocks = blocks();
+  allBlocks[2].coversElementIds = ['ghost-element'];
+  const result = validateCoverage(coverage(), allBlocks, hierarchy());
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes('references unknown element')));
+});
+
+test('duplicate blockIds are rejected', () => {
+  const items = structuredClone(coverage());
+  items[0].blockIds = ['l01-b01', 'l01-b01'];
+  const result = validateCoverage(items, blocks(), hierarchy());
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes('must not contain duplicates')));
+});
+
+test('duplicate stageLocations are rejected', () => {
+  const items = structuredClone(coverage());
+  items[0].blockIds = ['l01-b01'];
+  items[0].stageLocations = ['understand', 'understand'];
+  const result = validateCoverage(items, blocks(), hierarchy());
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes('must not contain duplicates')));
+});
+
+test('block outside the lesson hierarchy is rejected', () => {
+  const data = hierarchy();
+  data.grades[0].subjects[0].units[0].lessons[0].stages = data.grades[0].subjects[0].units[0].lessons[0].stages.map(
+    (s) => (s.stageKey === 'understand' ? { ...s, blockIds: [] } : s),
+  );
+  const result = validateCoverage(coverage(), blocks(), data);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes('is not in the lesson hierarchy')));
+});
+
+test('block stage mismatch with hierarchy position is rejected', () => {
+  const allBlocks = blocks();
+  allBlocks[0].stageKey = 'apply';
+  const result = validateCoverage(coverage(), allBlocks, hierarchy());
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes('does not match')));
+});
+
 test('single element treated in multiple stages is accepted', () => {
-  const items = fixture('valid-coverage.json');
+  const items = coverage();
   assert.deepEqual(items[0].stageLocations, ['understand', 'apply']);
-  const result = validateCoverage(items, fixture('valid-blocks.json'));
+  const result = validateCoverage(items, blocks(), hierarchy());
   assert.equal(result.valid, true, result.errors.join('; '));
 });
 
@@ -123,9 +202,9 @@ test('coverage without any source fails', () => {
       subItems: [],
     },
   ];
-  const result = validateCoverage(items, fixture('valid-blocks.json'));
+  const result = validateCoverage(items, blocks(), hierarchy());
   assert.equal(result.valid, false);
-  assert.ok(result.errors.some((e) => e.includes('traceable source')));
+  assert.ok(result.errors.some((e) => e.includes('sourceRefs')));
 });
 
 test('valid notebook passes', () => {
@@ -195,8 +274,8 @@ test('clear sources with expected list do not block preparation', () => {
 
 test('non-essential unclear source does not block preparation', () => {
   const pages = [
-    { pageNo: 1, clarityStatus: 'clear', essential: true, inspectedBy: 'x', inspectedAt: 'y' },
-    { pageNo: 2, clarityStatus: 'unclear', essential: false, inspectedBy: 'x', inspectedAt: 'y' },
+    { pageNo: 1, imagePath: 'a.jpg', clarityStatus: 'clear', essential: true, inspectedBy: 'x', inspectedAt: 'y' },
+    { pageNo: 2, imagePath: 'b.jpg', clarityStatus: 'unclear', essential: false, inspectedBy: 'x', inspectedAt: 'y' },
   ];
   const result = validateSourcePrepGate(pages, [], { pages: [1], figures: [] });
   assert.equal(result.blocked, false);
@@ -224,32 +303,32 @@ test('expected source without inspection record blocks preparation', () => {
 });
 
 test('coherent fictional lesson passes all validators together', () => {
-  const hierarchy = fixture('valid-hierarchy.json');
-  const blocks = fixture('valid-blocks.json');
-  const coverage = fixture('valid-coverage.json');
+  const data = hierarchy();
+  const allBlocks = blocks();
+  const items = coverage();
   const sources = fixture('valid-sources.json');
   const notebookData = fixture('valid-notebook.json');
   const quizData = fixture('valid-quiz.json');
 
-  assert.equal(validateHierarchy(hierarchy).valid, true);
-  for (const block of blocks) assert.equal(validateContentBlock(block).valid, true);
-  assert.equal(validateCoverage(coverage, blocks).valid, true);
+  assert.equal(validateHierarchy(data).valid, true);
+  for (const block of allBlocks) assert.equal(validateContentBlock(block).valid, true);
+  assert.equal(validateCoverage(items, allBlocks, data).valid, true);
   assert.equal(validateSourcePrepGate(sources.pages, sources.figures, { pages: [10], figures: [1] }).blocked, false);
   assert.equal(validateNotebook(notebookData.notebook, notebookData.subItems, notebookData.profile).valid, true);
   for (const quiz of quizData.quizzes) {
     assert.equal(validateQuiz(quiz, quizData.authorizations, quizData.units).valid, true);
   }
 
-  const lesson = hierarchy.grades[0].subjects[0].units[0].lessons[0];
-  const blockIds = new Set(blocks.map((b) => b.id));
+  const lesson = data.grades[0].subjects[0].units[0].lessons[0];
+  const blockIds = new Set(allBlocks.map((b) => b.id));
   for (const stage of lesson.stages) {
     for (const blockId of stage.blockIds) {
       assert.ok(blockIds.has(blockId), 'stage references existing block ' + blockId);
     }
   }
-  for (const item of coverage) {
+  for (const item of items) {
     for (const blockId of item.blockIds) {
-      const block = blocks.find((b) => b.id === blockId);
+      const block = allBlocks.find((b) => b.id === blockId);
       assert.ok(block.coversElementIds.includes(item.elementId));
       assert.ok(item.stageLocations.includes(block.stageKey));
     }
@@ -279,8 +358,8 @@ test('validators return errors instead of throwing on malformed input', () => {
     () => validateContentBlock(null),
     () => validateContentBlock({}),
     () => validateCoverage(null),
-    () => validateCoverage([null]),
-    () => validateCoverage([{ elementId: 'x', subItems: [null] }], null),
+    () => validateCoverage([null], null, null),
+    () => validateCoverage([{ elementId: 'x', subItems: [null] }], null, null),
     () => validateLessonProfile(null),
     () => validateNotebook(null, null, null),
     () => validateNotebook({ lessonId: 'l01', sections: [null] }, null, null),
@@ -316,11 +395,11 @@ test('source gate returns blockers instead of throwing on malformed input', () =
 });
 
 test('hierarchy with null stage entries fails without throwing', () => {
-  const hierarchy = fixture('valid-hierarchy.json');
-  hierarchy.grades[0].subjects[0].units[0].lessons[0].stages[0] = null;
+  const data = hierarchy();
+  data.grades[0].subjects[0].units[0].lessons[0].stages[0] = null;
   let result;
   assert.doesNotThrow(() => {
-    result = validateHierarchy(hierarchy);
+    result = validateHierarchy(data);
   });
   assert.equal(result.valid, false);
 });

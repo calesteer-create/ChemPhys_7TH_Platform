@@ -3,11 +3,14 @@
 // on malformed input (malformed input is reported as errors).
 //
 // The seven JSON schemas under src/content/schema are the single source of
-// truth for enumerations and required fields. createValidators binds the
-// checks to a given schema set, so changing a constraint in a schema changes
-// validation results. Cross-entity rules that JSON Schema cannot express
-// (source prep gate, coverage-to-block linkage, last-lesson verification,
-// version-hash binding) are implemented as explicit code checks below.
+// truth for structural constraints. A small built-in engine enforces type,
+// required, enum, properties, items, minItems, maxItems, minLength, minimum,
+// and local $ref resolution directly from the schema files, so changing any
+// structural constraint in a schema changes validation results. Rules that
+// JSON Schema cannot express without conditionals (book-source requirement,
+// lab activity kind, notebook payload per type, source prep gate, coverage
+// linkage, last-lesson verification, version-hash binding) are implemented as
+// explicit cross-entity checks below and are documented as such.
 
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -31,6 +34,83 @@ export function loadSchemas() {
   };
 }
 
+function resolveRef(ref, root) {
+  const parts = String(ref).replace(/^#\//, '').split('/');
+  let current = root;
+  for (const part of parts) {
+    current = current?.[part.replace(/~1/g, '/').replace(/~0/g, '~')];
+  }
+  return current;
+}
+
+function typeMatches(value, type) {
+  switch (type) {
+    case 'string': return typeof value === 'string';
+    case 'integer': return Number.isInteger(value);
+    case 'number': return typeof value === 'number';
+    case 'boolean': return typeof value === 'boolean';
+    case 'array': return Array.isArray(value);
+    case 'object': return value !== null && typeof value === 'object' && !Array.isArray(value);
+    case 'null': return value === null;
+    default: return true;
+  }
+}
+
+// Generic structural validation driven entirely by the schema object.
+function validateAgainstSchema(value, schema, root, path, errors) {
+  if (!schema || typeof schema !== 'object') return;
+  if (schema.$ref) {
+    validateAgainstSchema(value, resolveRef(schema.$ref, root), root, path, errors);
+    return;
+  }
+  if (Array.isArray(schema.enum) && !schema.enum.includes(value)) {
+    errors.push(path + ': must be one of ' + schema.enum.join('|'));
+    return;
+  }
+  const types = Array.isArray(schema.type) ? schema.type : (schema.type ? [schema.type] : []);
+  if (types.length > 0 && !types.some((t) => typeMatches(value, t))) {
+    errors.push(path + ': must be ' + types.join('|'));
+    return;
+  }
+  if (typeof value === 'string' && schema.minLength !== undefined && value.length < schema.minLength) {
+    errors.push(path + ': must have length >= ' + schema.minLength);
+  }
+  if (typeof value === 'number' && schema.minimum !== undefined && value < schema.minimum) {
+    errors.push(path + ': must be >= ' + schema.minimum);
+  }
+  if (Array.isArray(value)) {
+    if (schema.minItems !== undefined && value.length < schema.minItems) {
+      errors.push(path + ': must have at least ' + schema.minItems + ' items');
+    }
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) {
+      errors.push(path + ': must have at most ' + schema.maxItems + ' items');
+    }
+    if (schema.items) {
+      value.forEach((entry, index) => {
+        validateAgainstSchema(entry, schema.items, root, path + '[' + index + ']', errors);
+      });
+    }
+  }
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    for (const field of schema.required ?? []) {
+      if (value[field] === undefined) errors.push(path + '.' + field + ' is required');
+    }
+    if (schema.properties) {
+      for (const [key, subSchema] of Object.entries(schema.properties)) {
+        if (value[key] !== undefined) {
+          validateAgainstSchema(value[key], subSchema, root, path + '.' + key, errors);
+        }
+      }
+    }
+  }
+}
+
+function structuralErrors(value, schema, root, path) {
+  const errors = [];
+  validateAgainstSchema(value, schema, root, path ?? '$', errors);
+  return errors;
+}
+
 export function createValidators(schemas) {
   const STAGE_KEYS = schemas.hierarchy.$defs.StageKey.enum;
   const CONTENT_KINDS = schemas.contentBlock.properties.kind.enum;
@@ -39,12 +119,10 @@ export function createValidators(schemas) {
   const VERIFICATION_STATUSES = schemas.coverage.$defs.CoverageItem.properties.verificationStatus.enum;
   const CLARITY_STATUSES = schemas.source.$defs.SourcePage.properties.clarityStatus.enum;
   const APPROVAL_GATES = schemas.approval.$defs.ApprovalRecord.properties.gate.enum;
-  const BLOCK_REQUIRED = schemas.contentBlock.required;
-  const ITEM_REQUIRED = schemas.coverage.$defs.CoverageItem.required;
-  const SUB_REQUIRED = schemas.coverage.$defs.CoverageSubItem.required;
-  const QUIZ_REQUIRED = schemas.quiz.$defs.Quiz.required;
-  const AUTH_REQUIRED = schemas.quiz.$defs.UnitTestAuthorization.required;
-  const RECORD_REQUIRED = schemas.approval.$defs.ApprovalRecord.required;
+  const SUB_KINDS = schemas.coverage.$defs.CoverageSubItem.properties.kind.enum;
+  const QUIZ_SCOPES = schemas.quiz.$defs.Quiz.properties.scope.enum;
+  const ACTIVITY_KINDS = schemas.hierarchy.$defs.StageContent.properties.activityKind.enum.filter((k) => k !== null);
+  const NOTEBOOK_ITEM_TYPES = schemas.notebook.$defs.NotebookItem.properties.itemType.enum;
 
   function result(errors) {
     return { valid: errors.length === 0, errors };
@@ -52,15 +130,6 @@ export function createValidators(schemas) {
 
   function isNonEmptyString(value) {
     return typeof value === 'string' && value.trim().length > 0;
-  }
-
-  function missingRequired(obj, required) {
-    const missing = [];
-    for (const field of required ?? []) {
-      const value = obj?.[field];
-      if (value === undefined || value === null || value === '') missing.push(field);
-    }
-    return missing;
   }
 
   function checkSourceRef(ref, label, errors) {
@@ -72,74 +141,51 @@ export function createValidators(schemas) {
     if (!Number.isInteger(ref.page) || ref.page < 1) errors.push(label + ': page must be an integer >= 1');
   }
 
-  function validateHierarchy(hierarchy) {
-    const errors = [];
-    if (!hierarchy || typeof hierarchy !== 'object') return result(['hierarchy must be an object']);
-    if (!hierarchy.platform || !isNonEmptyString(hierarchy.platform.id)) {
-      errors.push('platform.id is required');
-    }
-    if (!hierarchy.platform || !isNonEmptyString(hierarchy.platform.title)) {
-      errors.push('platform.title is required');
-    }
-    if (!Array.isArray(hierarchy.grades) || hierarchy.grades.length === 0) {
-      errors.push('grades must be a non-empty array');
-      return result(errors);
-    }
-    const lessonIds = new Set();
-    for (const grade of hierarchy.grades) {
-      if (!grade || !isNonEmptyString(grade.id)) errors.push('grade.id is required');
-      if (!Array.isArray(grade?.subjects) || grade.subjects.length === 0) {
-        errors.push('grade ' + (grade?.id ?? '?') + ': subjects must be a non-empty array');
-        continue;
-      }
-      for (const subject of grade.subjects) {
-        if (!subject || !isNonEmptyString(subject.id)) errors.push('subject.id is required');
-        if (!Array.isArray(subject?.units) || subject.units.length === 0) {
-          errors.push('subject ' + (subject?.id ?? '?') + ': units must be a non-empty array');
-          continue;
-        }
-        for (const unit of subject.units) {
-          if (!unit || !isNonEmptyString(unit.id)) errors.push('unit.id is required');
-          if (!Number.isInteger(unit?.order) || unit.order < 1) {
-            errors.push('unit ' + (unit?.id ?? '?') + ': order must be an integer >= 1');
-          }
-          if (!Array.isArray(unit?.lessons) || unit.lessons.length === 0) {
-            errors.push('unit ' + (unit?.id ?? '?') + ': lessons must be a non-empty array');
-            continue;
-          }
-          for (const lesson of unit.lessons) {
-            if (!lesson || !isNonEmptyString(lesson.id)) {
-              errors.push('lesson.id is required');
-              continue;
+  function findLessonStageMap(hierarchy, lessonId) {
+    const map = new Map();
+    for (const grade of hierarchy?.grades ?? []) {
+      for (const subject of grade?.subjects ?? []) {
+        for (const unit of subject?.units ?? []) {
+          for (const lesson of unit?.lessons ?? []) {
+            if (lesson?.id === lessonId) {
+              for (const stage of lesson.stages ?? []) {
+                for (const blockId of stage?.blockIds ?? []) {
+                  map.set(blockId, stage.stageKey);
+                }
+              }
             }
+          }
+        }
+      }
+    }
+    return map;
+  }
+
+  function validateHierarchy(hierarchy) {
+    const errors = structuralErrors(hierarchy, schemas.hierarchy, schemas.hierarchy, '$');
+    if (!hierarchy || typeof hierarchy !== 'object') return result(errors.length > 0 ? errors : ['hierarchy must be an object']);
+    const lessonIds = new Set();
+    for (const grade of hierarchy.grades ?? []) {
+      for (const subject of grade?.subjects ?? []) {
+        for (const unit of subject?.units ?? []) {
+          for (const lesson of unit?.lessons ?? []) {
+            if (!lesson || !isNonEmptyString(lesson.id)) continue;
             if (lessonIds.has(lesson.id)) errors.push('duplicate lesson id: ' + lesson.id);
             lessonIds.add(lesson.id);
-            if (!Number.isInteger(lesson.order) || lesson.order < 1) {
-              errors.push('lesson ' + lesson.id + ': order must be an integer >= 1');
-            }
-            if (!Array.isArray(lesson.stages) || lesson.stages.length !== STAGE_KEYS.length) {
-              errors.push('lesson ' + lesson.id + ': stages must contain exactly ' + STAGE_KEYS.length + ' entries');
-              continue;
-            }
+            if (!Array.isArray(lesson.stages) || lesson.stages.length !== STAGE_KEYS.length) continue;
             const keys = lesson.stages.map((s) => s?.stageKey);
             const keySet = new Set(keys);
             if (keySet.size !== STAGE_KEYS.length || !STAGE_KEYS.every((k) => keySet.has(k))) {
               errors.push('lesson ' + lesson.id + ': stages must cover exactly the stage keys from the schema');
             }
             for (const stage of lesson.stages) {
-              if (!stage || typeof stage !== 'object') {
-                errors.push('lesson ' + lesson.id + ': stage entry must be an object');
-                continue;
-              }
+              if (!stage || typeof stage !== 'object') continue;
               if (stage.stageKey === 'labOrActivity') {
-                if (stage.activityKind !== 'simulation' && stage.activityKind !== 'activity') {
-                  errors.push('lesson ' + lesson.id + ': labOrActivity requires activityKind simulation|activity');
+                if (!ACTIVITY_KINDS.includes(stage.activityKind)) {
+                  errors.push('lesson ' + lesson.id + ': labOrActivity requires activityKind ' + ACTIVITY_KINDS.join('|'));
                 }
               } else if (stage.activityKind !== null && stage.activityKind !== undefined) {
                 errors.push('lesson ' + lesson.id + ': activityKind must be null outside labOrActivity');
-              }
-              if (!Array.isArray(stage.blockIds)) {
-                errors.push('lesson ' + lesson.id + ' stage ' + stage.stageKey + ': blockIds must be an array');
               }
             }
           }
@@ -150,120 +196,98 @@ export function createValidators(schemas) {
   }
 
   function validateContentBlock(block) {
-    const errors = [];
-    if (!block || typeof block !== 'object') return result(['block must be an object']);
+    const errors = structuralErrors(block, schemas.contentBlock, schemas.contentBlock, '$');
+    if (!block || typeof block !== 'object') return result(errors.length > 0 ? errors : ['block must be an object']);
     const label = 'block ' + (block.id ?? '?');
-    for (const field of missingRequired(block, BLOCK_REQUIRED)) {
-      errors.push(label + ': ' + field + ' is required');
-    }
-    if (!STAGE_KEYS.includes(block.stageKey)) errors.push(label + ': stageKey is invalid');
-    if (!CONTENT_KINDS.includes(block.kind)) errors.push(label + ': kind is invalid');
-    if (!BLOCK_TYPES.includes(block.blockType)) errors.push(label + ': blockType is invalid');
-    if (!Array.isArray(block.sourceRefs)) {
-      errors.push(label + ': sourceRefs must be an array');
-    } else {
+    if (Array.isArray(block.sourceRefs)) {
       block.sourceRefs.forEach((ref, i) => checkSourceRef(ref, label + ' sourceRefs[' + i + ']', errors));
       if (block.kind === 'book' && block.sourceRefs.length < 1) {
         errors.push(label + ': book content requires at least one traceable source');
       }
     }
-    if (block.bodyMarkdown !== undefined && typeof block.bodyMarkdown !== 'string') {
-      errors.push(label + ': bodyMarkdown must be a string');
-    }
-    if (block.coversElementIds !== undefined && !Array.isArray(block.coversElementIds)) {
-      errors.push(label + ': coversElementIds must be an array');
-    }
     return result(errors);
   }
 
-  // blocks: the lesson's content blocks. A covered/verified element is only
-  // accepted when its blockIds resolve to real blocks that back-reference the
-  // element and sit in the declared stage locations. The status flag alone
-  // never proves completeness.
-  function validateCoverage(items, blocks) {
+  // blocks: the lesson's content blocks. hierarchy: the full hierarchy object
+  // used to prove each treatment block sits in the lesson's actual stages.
+  // A covered/verified element is only accepted when its blockIds resolve to
+  // real blocks that back-reference the element, sit in the declared stage
+  // locations, and appear in the hierarchy at the declared positions.
+  function validateCoverage(items, blocks, hierarchy) {
     const errors = [];
     const uncovered = [];
     if (!Array.isArray(items)) return { valid: false, errors: ['items must be an array'], uncovered };
+    errors.push(...structuralErrors({ items }, schemas.coverage, schemas.coverage, '$'));
     const blockList = Array.isArray(blocks) ? blocks : [];
     const blockById = new Map();
     for (const block of blockList) {
       if (block && isNonEmptyString(block.id)) blockById.set(block.id, block);
     }
-    const elementIds = new Set();
-    for (const item of items) {
-      const label = 'element ' + (item?.elementId ?? '?');
-      if (!item || typeof item !== 'object') {
-        errors.push('coverage item must be an object');
-        continue;
-      }
-      for (const field of missingRequired(item, ITEM_REQUIRED)) {
-        errors.push(label + ': ' + field + ' is required');
-      }
-      if (!isNonEmptyString(item.elementId)) errors.push('elementId is required');
-      else if (elementIds.has(item.elementId)) errors.push('duplicate elementId: ' + item.elementId);
-      else elementIds.add(item.elementId);
-      if (!ELEMENT_TYPES.includes(item.elementType)) errors.push(label + ': elementType is invalid');
-      if (!Array.isArray(item.sourceRefs) || item.sourceRefs.length < 1) {
-        errors.push(label + ': at least one traceable source is required');
-      } else {
-        item.sourceRefs.forEach((ref, i) => checkSourceRef(ref, label + ' sourceRefs[' + i + ']', errors));
-      }
-      if (!STAGE_KEYS.includes(item.stageLocation)) errors.push(label + ': stageLocation is invalid');
-      if (Array.isArray(item.stageLocations)) {
-        for (const stage of item.stageLocations) {
-          if (!STAGE_KEYS.includes(stage)) errors.push(label + ': stageLocations entry ' + stage + ' is invalid');
+    const elementIds = new Set(items.map((i) => i?.elementId).filter(isNonEmptyString));
+    const stageMap = hierarchy ? findLessonStageMap(hierarchy, null) : null;
+
+    for (const block of blockList) {
+      for (const elementId of block?.coversElementIds ?? []) {
+        if (!elementIds.has(elementId)) {
+          errors.push('block ' + (block.id ?? '?') + ': references unknown element ' + elementId);
         }
       }
-      if (!VERIFICATION_STATUSES.includes(item.verificationStatus)) {
-        errors.push(label + ': verificationStatus is invalid');
-      }
+    }
+
+    for (const item of items) {
+      const label = 'element ' + (item?.elementId ?? '?');
+      if (!item || typeof item !== 'object') continue;
       if (item.verificationStatus === 'uncovered') {
         uncovered.push(item.elementId);
         errors.push(label + ' is uncovered (incomplete coverage)');
       }
-      if (item.verificationStatus === 'covered' || item.verificationStatus === 'verified') {
-        if (!Array.isArray(item.blockIds) || item.blockIds.length === 0) {
-          errors.push(label + ': covered element requires at least one treatment block');
-        } else {
-          const allowedStages = Array.isArray(item.stageLocations) && item.stageLocations.length > 0
-            ? item.stageLocations
-            : [item.stageLocation];
-          for (const blockId of item.blockIds) {
-            const block = blockById.get(blockId);
-            if (!block) {
-              errors.push(label + ': references missing block ' + blockId);
-              continue;
-            }
-            if (block.lessonId !== item.lessonId) {
-              errors.push(label + ': block ' + blockId + ' belongs to a different lesson');
-            }
-            if (!(block.coversElementIds ?? []).includes(item.elementId)) {
-              errors.push(label + ': block ' + blockId + ' does not treat this element');
-            }
-            if (!allowedStages.includes(block.stageKey)) {
-              errors.push(label + ': block ' + blockId + ' stage ' + block.stageKey + ' does not match declared stage locations');
-            }
+      for (const sub of item.subItems ?? []) {
+        if (sub?.verificationStatus === 'uncovered') {
+          uncovered.push(sub.subId);
+          errors.push('sub ' + (sub?.subId ?? '?') + ' is uncovered (incomplete coverage)');
+        }
+      }
+      if (item.verificationStatus !== 'covered' && item.verificationStatus !== 'verified') continue;
+      if (!Array.isArray(item.blockIds) || item.blockIds.length === 0) {
+        errors.push(label + ': covered element requires at least one treatment block');
+        continue;
+      }
+      if (new Set(item.blockIds).size !== item.blockIds.length) {
+        errors.push(label + ': blockIds must not contain duplicates');
+      }
+      if (Array.isArray(item.stageLocations) && new Set(item.stageLocations).size !== item.stageLocations.length) {
+        errors.push(label + ': stageLocations must not contain duplicates');
+      }
+      const allowedStages = Array.isArray(item.stageLocations) && item.stageLocations.length > 0
+        ? item.stageLocations
+        : [item.stageLocation];
+      const lessonStageMap = hierarchy ? findLessonStageMap(hierarchy, item.lessonId) : null;
+      for (const blockId of item.blockIds) {
+        const block = blockById.get(blockId);
+        if (!block) {
+          errors.push(label + ': references missing block ' + blockId);
+          continue;
+        }
+        if (block.lessonId !== item.lessonId) {
+          errors.push(label + ': block ' + blockId + ' belongs to a different lesson');
+        }
+        if (!(block.coversElementIds ?? []).includes(item.elementId)) {
+          errors.push(label + ': block ' + blockId + ' does not treat this element');
+        }
+        if (!allowedStages.includes(block.stageKey)) {
+          errors.push(label + ': block ' + blockId + ' stage ' + block.stageKey + ' does not match declared stage locations');
+        }
+        if (lessonStageMap) {
+          if (!lessonStageMap.has(blockId)) {
+            errors.push(label + ': block ' + blockId + ' is not in the lesson hierarchy');
+          } else if (lessonStageMap.get(blockId) !== block.stageKey) {
+            errors.push(label + ': block ' + blockId + ' hierarchy stage ' + lessonStageMap.get(blockId) + ' does not match block stage ' + block.stageKey);
           }
         }
       }
-      for (const sub of item.subItems ?? []) {
-        const subLabel = 'sub ' + (sub?.subId ?? '?');
-        if (!sub || typeof sub !== 'object') {
-          errors.push(label + ': sub-item must be an object');
-          continue;
-        }
-        for (const field of missingRequired(sub, SUB_REQUIRED)) {
-          errors.push(subLabel + ': ' + field + ' is required');
-        }
-        if (sub.kind !== 'info' && sub.kind !== 'skill') errors.push(subLabel + ': kind must be info|skill');
-        if (!STAGE_KEYS.includes(sub.stageLocation)) errors.push(subLabel + ': stageLocation is invalid');
-        if (typeof sub.notebookRequired !== 'boolean') errors.push(subLabel + ': notebookRequired must be boolean');
-        if (!VERIFICATION_STATUSES.includes(sub.verificationStatus)) {
-          errors.push(subLabel + ': verificationStatus is invalid');
-        }
-        if (sub.verificationStatus === 'uncovered') {
-          uncovered.push(sub.subId);
-          errors.push(subLabel + ' is uncovered (incomplete coverage)');
+      for (const block of blockList) {
+        if ((block?.coversElementIds ?? []).includes(item.elementId) && !item.blockIds.includes(block.id)) {
+          errors.push(label + ': block ' + block.id + ' claims to treat this element but is not listed');
         }
       }
     }
@@ -280,6 +304,13 @@ export function createValidators(schemas) {
     const allFigures = Array.isArray(figures) ? figures : [];
     const expectedPages = Array.isArray(expected?.pages) ? expected.pages : [];
     const expectedFigures = Array.isArray(expected?.figures) ? expected.figures : [];
+
+    for (const page of allPages) {
+      blockers.push(...structuralErrors(page, schemas.source.$defs.SourcePage, schemas.source, 'page ' + (page?.pageNo ?? '?')));
+    }
+    for (const figure of allFigures) {
+      blockers.push(...structuralErrors(figure, schemas.source.$defs.SourceFigure, schemas.source, 'figure ' + (figure?.figureNo ?? '?')));
+    }
 
     const essentialPages = allPages.filter((p) => p?.essential !== false);
     const essentialFigures = allFigures.filter((f) => f?.essential !== false);
@@ -315,19 +346,11 @@ export function createValidators(schemas) {
     return { blocked: blockers.length > 0, blockers };
   }
 
-  // Minimum structural requirements for a valid lesson profile. A lesson
-  // without laws is valid: capability flags are optional booleans and no
-  // section is forced by their absence.
+  // Minimum structural requirements for a valid lesson profile, driven by the
+  // notebook schema. A lesson without laws is valid: capability flags are
+  // optional booleans and no section is forced by their absence.
   function validateLessonProfile(profile) {
-    const errors = [];
-    if (!profile || typeof profile !== 'object') return result(['profile must be an object']);
-    if (!isNonEmptyString(profile.lessonId)) errors.push('profile.lessonId is required');
-    const flags = ['hasLaws', 'hasExperiments', 'hasFigures', 'hasWorkedExamples', 'hasTables', 'hasSkills'];
-    for (const flag of flags) {
-      if (profile[flag] !== undefined && typeof profile[flag] !== 'boolean') {
-        errors.push('profile.' + flag + ' must be a boolean');
-      }
-    }
+    const errors = structuralErrors(profile, schemas.notebook.$defs.LessonProfile, schemas.notebook, '$');
     return result(errors);
   }
 
@@ -365,10 +388,8 @@ export function createValidators(schemas) {
   }
 
   function validateNotebook(notebook, subItems, profile) {
-    const errors = [];
-    if (!notebook || typeof notebook !== 'object') return result(['notebook must be an object']);
-    if (!isNonEmptyString(notebook.lessonId)) errors.push('notebook.lessonId is required');
-    if (!Array.isArray(notebook.sections)) return result([...errors, 'notebook.sections must be an array']);
+    const errors = structuralErrors(notebook, schemas.notebook, schemas.notebook, '$');
+    if (!notebook || typeof notebook !== 'object') return result(errors.length > 0 ? errors : ['notebook must be an object']);
     if (profile !== undefined && profile !== null) {
       errors.push(...validateLessonProfile(profile).errors);
     }
@@ -380,24 +401,12 @@ export function createValidators(schemas) {
     const knownSubs = new Set((subItems ?? []).map((s) => s?.subId));
     const traced = new Set();
 
-    for (const section of notebook.sections) {
+    for (const section of notebook.sections ?? []) {
       const sectionLabel = 'section ' + (section?.sectionType ?? '?');
-      if (!section || typeof section !== 'object') {
-        errors.push('notebook section must be an object');
-        continue;
-      }
-      if (!isNonEmptyString(section.sectionType)) errors.push('sectionType is required');
-      if (!Array.isArray(section.items) || section.items.length === 0) {
-        errors.push(sectionLabel + ': empty sections are not allowed');
-        continue;
-      }
-      for (const item of section.items) {
+      if (!section || typeof section !== 'object') continue;
+      for (const item of section.items ?? []) {
         const label = 'item ' + (item?.itemId ?? '?');
-        if (!item || typeof item !== 'object') {
-          errors.push(sectionLabel + ': notebook item must be an object');
-          continue;
-        }
-        if (!isNonEmptyString(item.itemId)) errors.push(sectionLabel + ': itemId is required');
+        if (!item || typeof item !== 'object') continue;
         if (!Array.isArray(item.tracesTo) || item.tracesTo.length === 0) {
           errors.push(label + ': tracesTo must reference at least one coverage sub-item');
         } else {
@@ -415,7 +424,7 @@ export function createValidators(schemas) {
     }
 
     if (profile && profile.hasLaws === true) {
-      const hasLawsSection = notebook.sections.some((s) => s?.sectionType === 'laws');
+      const hasLawsSection = (notebook.sections ?? []).some((s) => s?.sectionType === 'laws');
       const hasRequiredLaw = [...requiredSubs.values()].some(
         (s) => s.notebookLocation === 'laws',
       );
@@ -430,13 +439,15 @@ export function createValidators(schemas) {
   // units: [{ unitId, lessons: [{ id, order }] }] — used to verify that the
   // authorized lastLessonId is the actual last lesson of the unit by order.
   function validateQuiz(quiz, authorizations, units) {
-    const errors = [];
-    if (!quiz || typeof quiz !== 'object') return result(['quiz must be an object']);
+    const errors = structuralErrors(
+      { quizzes: quiz ? [quiz] : [], authorizations: authorizations ?? [] },
+      schemas.quiz,
+      schemas.quiz,
+      '$',
+    );
+    if (!quiz || typeof quiz !== 'object') return result(errors.length > 0 ? errors : ['quiz must be an object']);
     const label = 'quiz ' + (quiz.id ?? '?');
-    for (const field of missingRequired(quiz, QUIZ_REQUIRED)) {
-      errors.push(label + ': ' + field + ' is required');
-    }
-    if (quiz.scope !== 'lesson' && quiz.scope !== 'unit') errors.push(label + ': scope must be lesson|unit');
+    if (!QUIZ_SCOPES.includes(quiz.scope)) errors.push(label + ': scope must be ' + QUIZ_SCOPES.join('|'));
     if (!Array.isArray(quiz.questions) || quiz.questions.length === 0) {
       errors.push(label + ': questions must be a non-empty array');
     }
@@ -450,9 +461,6 @@ export function createValidators(schemas) {
       if (!match) {
         errors.push(label + ': unit quiz requires UnitTestAuthorization for unit ' + (quiz.unitId ?? '?'));
       } else {
-        for (const field of missingRequired(match, AUTH_REQUIRED)) {
-          errors.push(label + ': authorization ' + field + ' is required');
-        }
         const unitList = Array.isArray(units) ? units : [];
         const unit = unitList.find((u) => u?.unitId === quiz.unitId);
         if (!unit || !Array.isArray(unit.lessons) || unit.lessons.length === 0) {
@@ -476,15 +484,29 @@ export function createValidators(schemas) {
   }
 
   function validateApprovalRecord(record, computedHash) {
-    const errors = [];
-    if (!record || typeof record !== 'object') return result(['record must be an object']);
+    const errors = structuralErrors(record, schemas.approval.$defs.ApprovalRecord, schemas.approval, '$');
+    if (!record || typeof record !== 'object') return result(errors.length > 0 ? errors : ['record must be an object']);
     const label = 'record ' + (record.lessonId ?? '?') + ' ' + (record.gate ?? '?');
-    for (const field of missingRequired(record, RECORD_REQUIRED)) {
-      errors.push(label + ': ' + field + ' is required');
-    }
-    if (!APPROVAL_GATES.includes(record.gate)) errors.push(label + ': gate is invalid');
     if (computedHash !== undefined && record.versionHash !== computedHash) {
       errors.push(label + ': versionHash does not match computed content hash');
+    }
+    return result(errors);
+  }
+
+  // Mandatory gates for approval. Publishing (D-publishing) is a separate step
+  // and is not required for the approval chain itself.
+  const MANDATORY_GATES = ['A-automated', 'B-scientific', 'B-notebook-educational', 'C-owner'];
+
+  function validateApprovalChain(records, computedHash) {
+    const errors = [];
+    if (!Array.isArray(records)) return result(['records must be an array']);
+    const present = new Set();
+    for (const record of records) {
+      errors.push(...validateApprovalRecord(record, computedHash).errors);
+      if (record && APPROVAL_GATES.includes(record.gate)) present.add(record.gate);
+    }
+    for (const gate of MANDATORY_GATES) {
+      if (!present.has(gate)) errors.push('mandatory gate missing: ' + gate);
     }
     return result(errors);
   }
@@ -497,6 +519,11 @@ export function createValidators(schemas) {
     VERIFICATION_STATUSES,
     CLARITY_STATUSES,
     APPROVAL_GATES,
+    SUB_KINDS,
+    QUIZ_SCOPES,
+    ACTIVITY_KINDS,
+    NOTEBOOK_ITEM_TYPES,
+    MANDATORY_GATES,
     validateHierarchy,
     validateContentBlock,
     validateCoverage,
@@ -505,6 +532,7 @@ export function createValidators(schemas) {
     validateNotebook,
     validateQuiz,
     validateApprovalRecord,
+    validateApprovalChain,
   };
 }
 
@@ -517,6 +545,11 @@ export const ELEMENT_TYPES = defaultValidators.ELEMENT_TYPES;
 export const VERIFICATION_STATUSES = defaultValidators.VERIFICATION_STATUSES;
 export const CLARITY_STATUSES = defaultValidators.CLARITY_STATUSES;
 export const APPROVAL_GATES = defaultValidators.APPROVAL_GATES;
+export const SUB_KINDS = defaultValidators.SUB_KINDS;
+export const QUIZ_SCOPES = defaultValidators.QUIZ_SCOPES;
+export const ACTIVITY_KINDS = defaultValidators.ACTIVITY_KINDS;
+export const NOTEBOOK_ITEM_TYPES = defaultValidators.NOTEBOOK_ITEM_TYPES;
+export const MANDATORY_GATES = defaultValidators.MANDATORY_GATES;
 export const validateHierarchy = defaultValidators.validateHierarchy;
 export const validateContentBlock = defaultValidators.validateContentBlock;
 export const validateCoverage = defaultValidators.validateCoverage;
@@ -525,3 +558,4 @@ export const validateLessonProfile = defaultValidators.validateLessonProfile;
 export const validateNotebook = defaultValidators.validateNotebook;
 export const validateQuiz = defaultValidators.validateQuiz;
 export const validateApprovalRecord = defaultValidators.validateApprovalRecord;
+export const validateApprovalChain = defaultValidators.validateApprovalChain;
