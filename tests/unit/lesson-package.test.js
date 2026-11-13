@@ -12,9 +12,14 @@ import {
 } from '../../src/validate/version-hash.js';
 import {
   validateLessonPackage,
+  loadLessonPackageFromDisk,
   deriveUnits,
   ALLOWED_ROOTS,
   MANIFEST_FILENAME,
+  SCHEMA_PATHS,
+  ROLE_ROOTS,
+  IMAGE_ROOT,
+  CONTENT_ROOT,
 } from '../../src/validate/lesson-package.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -132,25 +137,39 @@ test('T-3a: computeVersionHash throws TypeError when nothing is hashable', () =>
   assert.throws(() => computeVersionHash([{ path: 'src/content/approvals/l01.json', content: '[]' }]), TypeError);
 });
 
-test('T-3b: the public interface converts that TypeError into a structured error and never throws', () => {
+test('T-3b: the public interface converts an internal TypeError into a structured error and never throws', () => {
   const files = roleFiles();
   const { files: approvedFiles } = approve(files);
-  // Nothing hashable: every supplied path is an approval record, and the seven
-  // schema files are not supplied either.
-  const onlyApprovals = {
-    approvals: approvedFiles.approvals,
-  };
+  // Task 005 fix: the seven schemas are mandatory hash inputs, so the empty-list
+  // TypeError that T-3a exercises internally is no longer reachable through the
+  // public path (a package always contributes at least the seven schemas).
+  // What T-3b must still prove is the CONVERSION: an internal TypeError never
+  // escapes the public interface. An incomplete schema set raises one.
   let result;
   assert.doesNotThrow(() => {
     result = validateLessonPackage({
-      files: onlyApprovals,
+      files: { approvals: approvedFiles.approvals },
       images: [],
     }, { schemaFiles: [] });
   });
   assert.equal(result.valid, false);
   assert.equal(result.hash, undefined);
-  assert.ok(result.errors.some((e) => e.startsWith('[hash]') && e.includes('no hashable files')), result.errors.join('; '));
+  assert.ok(result.errors.some((e) => e.startsWith('[hash]')), result.errors.join('; '));
   assert.equal(result.publishingStatus, 'not-ready');
+  assert.equal(result.readyToPublish, false);
+
+  // The public interface also never throws on a completely malformed bundle.
+  let malformed;
+  assert.doesNotThrow(() => { malformed = validateLessonPackage(undefined); });
+  assert.equal(malformed.valid, false);
+  assert.ok(malformed.errors.length > 0);
+});
+
+test('T-3b-2: computeVersionHash still throws TypeError for zero hashable files (internal contract)', () => {
+  // The internal contract is unchanged; only the public layer is guaranteed not
+  // to throw. This keeps T-3a and T-3b separately meaningful after the change.
+  assert.throws(() => computeVersionHash([]), TypeError);
+  assert.throws(() => computeVersionHash([{ path: 'src/content/approvals/a.json', content: '[]' }]), TypeError);
 });
 
 // ---------------------------------------------------------------------------
@@ -775,18 +794,27 @@ test('L-1: the disk loader reads the manifest and every role as raw bytes', asyn
   const { tmpdir } = await import('node:os');
   const tempRoot = mkdtempSync(join(tmpdir(), 'lesson-package-'));
   mkdirSync(join(tempRoot, 'src/content/approvals'), { recursive: true });
+  mkdirSync(join(tempRoot, 'src/content/schema'), { recursive: true });
   mkdirSync(join(tempRoot, 'assets/fixtures'), { recursive: true });
   const m = manifest();
   for (const relPath of Object.values(m.files)) {
     cpSync(join(root, relPath), join(tempRoot, relPath));
   }
   for (const relPath of m.images) cpSync(join(root, relPath), join(tempRoot, relPath));
+  // The seven schemas are mandatory disk inputs.
+  for (const schemaPath of SCHEMA_PATHS) cpSync(join(root, schemaPath), join(tempRoot, schemaPath));
   writeFileSync(join(tempRoot, MANIFEST_FILENAME), manifestText());
   const loaded = loadLessonPackageFromDisk(tempRoot);
   assert.equal(loaded.ok, true, loaded.errors.join('; '));
   assert.ok(Buffer.isBuffer(loaded.bundle.manifest.content));
   for (const role of Object.keys(m.files)) {
     assert.ok(Buffer.isBuffer(loaded.bundle.files[role].content), role + ' must be raw bytes');
+  }
+  // The loader also returns the seven schemas as raw bytes for the hash.
+  assert.equal(loaded.options.schemaFiles.length, 7);
+  for (const entry of loaded.options.schemaFiles) {
+    assert.ok(Buffer.isBuffer(entry.content), entry.path + ' must be raw bytes');
+    assert.ok(SCHEMA_PATHS.includes(entry.path), entry.path + ' must be a fixed schema path');
   }
 });
 
@@ -806,4 +834,282 @@ test('L-3: a missing file is reported, never assumed to exist', async () => {
   const loaded = loadLessonPackageFromDisk(tempRoot);
   assert.equal(loaded.ok, false);
   assert.ok(loaded.errors.some((e) => e.includes('is not readable')), loaded.errors.join('; '));
+});
+
+// ---------------------------------------------------------------------------
+// SCHEMA-1..4: the seven schemas are a mandatory part of the hash.
+// ---------------------------------------------------------------------------
+
+function schemaInputs() {
+  return SCHEMA_PATHS.map((p) => ({ path: p, content: readFileSync(join(root, p)) }));
+}
+
+function bundleWith(options) {
+  const files = roleFiles();
+  const probe = validateLessonPackage({
+    files,
+    manifest: { path: MANIFEST_FILENAME, content: manifestText() },
+    images: images(),
+  }, options);
+  const patched = files.approvals.content.replaceAll('__COMPUTED_HASH__', probe.hash);
+  return { files: { ...files, approvals: { ...files.approvals, content: patched } }, probe };
+}
+
+test('SCHEMA-1: the seven schemas enter the hash (changing one byte changes it)', () => {
+  const files = roleFiles();
+  const base = { files, manifest: { path: MANIFEST_FILENAME, content: manifestText() }, images: images() };
+  const withSchemas = validateLessonPackage(base, { schemaFiles: schemaInputs() });
+  const mutated = schemaInputs();
+  mutated[0] = { ...mutated[0], content: Buffer.concat([mutated[0].content, Buffer.from(' ')]) };
+  const withMutatedSchema = validateLessonPackage(base, { schemaFiles: mutated });
+  assert.notEqual(withMutatedSchema.hash, withSchemas.hash);
+});
+
+test('SCHEMA-2: dropping one schema blocks the package and yields no valid hash', () => {
+  const files = roleFiles();
+  const partial = schemaInputs().slice(0, 6);
+  let result;
+  assert.doesNotThrow(() => {
+    result = validateLessonPackage({
+      files,
+      manifest: { path: MANIFEST_FILENAME, content: manifestText() },
+      images: images(),
+    }, { schemaFiles: partial });
+  });
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.startsWith('[hash]') && e.includes('is required and could not be read')), result.errors.join('; '));
+  assert.ok(result.errors.some((e) => e.includes('cannot be hashed without all seven schemas')), result.errors.join('; '));
+  assert.equal(result.hash, undefined, 'an incomplete schema set must not produce a usable hash');
+});
+
+test('SCHEMA-3: a substituted schema path is rejected', () => {
+  const files = roleFiles();
+  const swapped = schemaInputs();
+  swapped[0] = { path: 'src/content/my-own-schema.json', content: swapped[0].content };
+  const result = validateLessonPackage({
+    files,
+    manifest: { path: MANIFEST_FILENAME, content: manifestText() },
+    images: images(),
+  }, { schemaFiles: swapped });
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes('is not one of the seven fixed schema paths')), result.errors.join('; '));
+});
+
+test('SCHEMA-4: a schema cannot be smuggled in from outside src/content/', () => {
+  const files = roleFiles();
+  const escaped = schemaInputs();
+  escaped[1] = { ...escaped[1], path: '/etc/passwd' };
+  const result = validateLessonPackage({
+    files,
+    manifest: { path: MANIFEST_FILENAME, content: manifestText() },
+    images: images(),
+  }, { schemaFiles: escaped });
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.startsWith('[hash]') && e.includes('schema path rejected')), result.errors.join('; '));
+});
+
+test('SCHEMA-5: the schema paths are exactly the seven approved files', () => {
+  assert.deepEqual(SCHEMA_PATHS, [
+    'src/content/schema/hierarchy.schema.json',
+    'src/content/schema/content-block.schema.json',
+    'src/content/schema/coverage.schema.json',
+    'src/content/schema/source.schema.json',
+    'src/content/schema/notebook.schema.json',
+    'src/content/schema/quiz.schema.json',
+    'src/content/schema/approval.schema.json',
+  ]);
+});
+
+// ---------------------------------------------------------------------------
+// ROOT-1..5: role roots enforced in MEMORY (no diskRoot).
+// ---------------------------------------------------------------------------
+
+test('ROOT-1: a content role outside src/content/ is rejected in memory mode', () => {
+  const files = roleFiles();
+  files.blocks = { ...files.blocks, path: 'assets/blocks.json' };
+  const { files: approvedFiles } = approve(files);
+  const result = validateLessonPackage({
+    files: approvedFiles,
+    manifest: { path: MANIFEST_FILENAME, content: manifestText() },
+    images: images(),
+  });
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes('must live under src/content/')), result.errors.join('; '));
+});
+
+test('ROOT-2: an image outside assets/ is rejected in memory mode', () => {
+  const files = roleFiles();
+  const { files: approvedFiles } = approve(files);
+  const result = validateLessonPackage({
+    files: approvedFiles,
+    manifest: { path: MANIFEST_FILENAME, content: manifestText() },
+    images: [{ path: 'src/content/sneaky.png', content: Buffer.from([1]) }],
+  });
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes('must live under assets/')), result.errors.join('; '));
+});
+
+test('ROOT-3: a traversal image path is rejected in memory mode', () => {
+  const files = roleFiles();
+  const { files: approvedFiles } = approve(files);
+  const result = validateLessonPackage({
+    files: approvedFiles,
+    manifest: { path: MANIFEST_FILENAME, content: manifestText() },
+    images: [{ path: 'assets/../../etc/passwd', content: Buffer.from([1]) }],
+  });
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes('..')), result.errors.join('; '));
+});
+
+test('ROOT-4: a role rooted at the directory itself is rejected', () => {
+  const files = roleFiles();
+  files.coverage = { ...files.coverage, path: 'src/content/' };
+  const { files: approvedFiles } = approve(files);
+  const result = validateLessonPackage({
+    files: approvedFiles,
+    manifest: { path: MANIFEST_FILENAME, content: manifestText() },
+    images: images(),
+  });
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes('must be a file inside')), result.errors.join('; '));
+});
+
+test('ROOT-5: role roots are exactly src/content/', () => {
+  for (const role of Object.keys(ROLE_ROOTS)) {
+    assert.equal(ROLE_ROOTS[role], CONTENT_ROOT, role + ' must be rooted at src/content/');
+  }
+  assert.equal(IMAGE_ROOT, 'assets/');
+});
+
+// ---------------------------------------------------------------------------
+// IMG-1..3: manifest.images must match bundle.images exactly.
+// ---------------------------------------------------------------------------
+
+test('IMG-1: a bundle image that is not declared in the manifest is rejected', () => {
+  const files = roleFiles();
+  const { files: approvedFiles } = approve(files);
+  const result = validateLessonPackage({
+    files: approvedFiles,
+    manifest: { path: MANIFEST_FILENAME, content: manifestText() },
+    images: [...images(), { path: 'assets/fixtures/extra.png', content: Buffer.from([9]) }],
+  });
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes('is not declared in the manifest')), result.errors.join('; '));
+});
+
+test('IMG-2: a declared image missing from the bundle is rejected', () => {
+  const files = roleFiles();
+  const { files: approvedFiles } = approve(files);
+  const result = validateLessonPackage({
+    files: approvedFiles,
+    manifest: { path: MANIFEST_FILENAME, content: manifestText() },
+    images: [],
+  });
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes('was not supplied in the bundle')), result.errors.join('; '));
+});
+
+test('IMG-3: a duplicated image path is rejected', () => {
+  const files = roleFiles();
+  const { files: approvedFiles } = approve(files);
+  const result = validateLessonPackage({
+    files: approvedFiles,
+    manifest: { path: MANIFEST_FILENAME, content: manifestText() },
+    images: [...images(), ...images()],
+  });
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes('duplicate image path')), result.errors.join('; '));
+});
+
+// ---------------------------------------------------------------------------
+// DISK-1..5: symlink and containment behaviour on a real filesystem.
+// ---------------------------------------------------------------------------
+
+function makePackageRoot() {
+  const { mkdtempSync, mkdirSync, cpSync, writeFileSync } = require('node:fs');
+  return { mkdtempSync, mkdirSync, cpSync, writeFileSync };
+}
+
+test('DISK-1: a valid package reads correctly through the disk loader', async () => {
+  const fs = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const tempRoot = fs.mkdtempSync(join(tmpdir(), 'pkg-ok-'));
+  fs.mkdirSync(join(tempRoot, 'src/content/approvals'), { recursive: true });
+  fs.mkdirSync(join(tempRoot, 'src/content/schema'), { recursive: true });
+  fs.mkdirSync(join(tempRoot, 'assets/fixtures'), { recursive: true });
+  const m = manifest();
+  for (const relPath of Object.values(m.files)) fs.cpSync(join(root, relPath), join(tempRoot, relPath));
+  for (const relPath of m.images) fs.cpSync(join(root, relPath), join(tempRoot, relPath));
+  for (const schemaPath of SCHEMA_PATHS) fs.cpSync(join(root, schemaPath), join(tempRoot, schemaPath));
+  fs.writeFileSync(join(tempRoot, MANIFEST_FILENAME), manifestText());
+
+  const loaded = loadLessonPackageFromDisk(tempRoot);
+  assert.equal(loaded.ok, true, loaded.errors.join('; '));
+  const result = validateLessonPackage(loaded.bundle, { schemaFiles: loaded.options.schemaFiles });
+  // The approvals still carry the placeholder, so the hash mismatch is expected:
+  // what this asserts is that reading from disk worked and the hash was computed.
+  assert.match(result.hash, /^[0-9a-f]{64}$/);
+  assert.ok(result.errors.every((e) => e.includes('versionHash does not match')), result.errors.join('; '));
+});
+
+test('DISK-2: an image outside assets/ is rejected before it is read', async () => {
+  const fs = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const tempRoot = fs.mkdtempSync(join(tmpdir(), 'pkg-img-'));
+  fs.mkdirSync(join(tempRoot, 'src/content/schema'), { recursive: true });
+  for (const schemaPath of SCHEMA_PATHS) {
+    fs.mkdirSync(join(tempRoot, dirname(schemaPath)), { recursive: true });
+    fs.cpSync(join(root, schemaPath), join(tempRoot, schemaPath));
+  }
+  fs.writeFileSync(join(tempRoot, MANIFEST_FILENAME), JSON.stringify({ files: {}, images: ['../outside.png'] }));
+  const loaded = loadLessonPackageFromDisk(tempRoot);
+  assert.equal(loaded.ok, false);
+  assert.ok(loaded.errors.some((e) => e.includes('..')), loaded.errors.join('; '));
+});
+
+test('DISK-3: an assets/ directory that is a symlink outside the package root is not trusted', async () => {
+  const fs = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const tempRoot = fs.mkdtempSync(join(tmpdir(), 'pkg-assets-'));
+  const outside = fs.mkdtempSync(join(tmpdir(), 'outside-'));
+  fs.writeFileSync(join(outside, 'evil.png'), 'evil');
+  fs.mkdirSync(join(tempRoot, 'src/content/schema'), { recursive: true });
+  for (const schemaPath of SCHEMA_PATHS) fs.cpSync(join(root, schemaPath), join(tempRoot, schemaPath));
+  // assets/ itself points outside the package root.
+  fs.symlinkSync(outside, join(tempRoot, 'assets'));
+  fs.writeFileSync(join(tempRoot, MANIFEST_FILENAME), JSON.stringify({ files: {}, images: ['assets/evil.png'] }));
+  const loaded = loadLessonPackageFromDisk(tempRoot);
+  assert.equal(loaded.ok, false);
+  assert.ok(loaded.errors.some((e) => e.includes('not trusted')), loaded.errors.join('; '));
+});
+
+test('DISK-4: a src/content/ directory that is a symlink outside the package root is not trusted', async () => {
+  const fs = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const tempRoot = fs.mkdtempSync(join(tmpdir(), 'pkg-content-'));
+  const outside = fs.mkdtempSync(join(tmpdir(), 'outside-content-'));
+  fs.mkdirSync(join(outside, 'data'), { recursive: true });
+  fs.writeFileSync(join(outside, 'data/blocks.json'), '[]');
+  // src/content itself points outside the package root.
+  fs.mkdirSync(join(tempRoot, 'src'), { recursive: true });
+  fs.symlinkSync(outside, join(tempRoot, 'src/content'));
+  fs.writeFileSync(join(tempRoot, MANIFEST_FILENAME), JSON.stringify({ files: { blocks: 'src/content/data/blocks.json' }, images: [] }));
+  const loaded = loadLessonPackageFromDisk(tempRoot);
+  assert.equal(loaded.ok, false);
+  assert.ok(loaded.errors.some((e) => e.includes('not trusted')), loaded.errors.join('; '));
+});
+
+test('DISK-5: a missing or non-regular file is reported, never assumed', async () => {
+  const fs = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const tempRoot = fs.mkdtempSync(join(tmpdir(), 'pkg-missing-'));
+  fs.mkdirSync(join(tempRoot, 'src/content'), { recursive: true });
+  fs.mkdirSync(join(tempRoot, 'assets'), { recursive: true });
+  // A directory where a file is expected.
+  fs.mkdirSync(join(tempRoot, 'assets/adir.png'), { recursive: true });
+  fs.writeFileSync(join(tempRoot, MANIFEST_FILENAME), JSON.stringify({ files: { blocks: 'src/content/none.json' }, images: ['assets/adir.png'] }));
+  const loaded = loadLessonPackageFromDisk(tempRoot);
+  assert.equal(loaded.ok, false);
+  assert.ok(loaded.errors.some((e) => e.includes('none.json') && e.includes('not readable')), loaded.errors.join('; '));
+  assert.ok(loaded.errors.some((e) => e.includes('adir.png') && e.includes('not a regular file')), loaded.errors.join('; '));
 });

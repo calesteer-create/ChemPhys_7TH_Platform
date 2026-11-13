@@ -40,25 +40,36 @@ import {
   loadSchemas,
 } from './validators.js';
 
-export const ROLE_PATHS = {
-  hierarchy: 'src/content/',
-  blocks: 'src/content/',
-  coverage: 'src/content/',
-  sources: 'src/content/',
-  notebook: 'src/content/',
-  quizzes: 'src/content/',
-  approvals: 'src/content/',
+// Every content role must live under src/content/ and every image under
+// assets/. This is enforced in memory (no filesystem needed) AND on disk.
+export const CONTENT_ROOT = 'src/content/';
+export const IMAGE_ROOT = 'assets/';
+
+export const ROLE_ROOTS = {
+  hierarchy: CONTENT_ROOT,
+  blocks: CONTENT_ROOT,
+  coverage: CONTENT_ROOT,
+  sources: CONTENT_ROOT,
+  notebook: CONTENT_ROOT,
+  quizzes: CONTENT_ROOT,
+  approvals: CONTENT_ROOT,
 };
+
+export const ROLE_PATHS = ROLE_ROOTS;
 
 // Roots allowed for content and images. The package manifest is the single
 // extra anchor: it sits at the package root (= repository root).
-export const ALLOWED_ROOTS = ['src/content/', 'assets/'];
+export const ALLOWED_ROOTS = [CONTENT_ROOT, IMAGE_ROOT];
 
 export const MANIFEST_FILENAME = 'lesson-package.json';
 
 export const MANDATORY_APPROVAL_GATES = ['A-automated', 'B-scientific', 'B-notebook-educational', 'C-owner'];
 
-const SCHEMA_FILES = [
+// The seven schemas are a mandatory, fixed part of the hashed bytes. They are
+// never supplied by the caller as free-form options: the fixed paths below are
+// the only accepted ones.
+export const SCHEMA_DIR = 'src/content/schema/';
+export const SCHEMA_FILES = [
   'hierarchy.schema.json',
   'content-block.schema.json',
   'coverage.schema.json',
@@ -67,6 +78,7 @@ const SCHEMA_FILES = [
   'quiz.schema.json',
   'approval.schema.json',
 ];
+export const SCHEMA_PATHS = SCHEMA_FILES.map((name) => SCHEMA_DIR + name);
 
 // Keys explicitly allowed on the quiz file's top level. `units` is NOT among
 // them: unit structure is derived from the hierarchy, never from the quiz file.
@@ -127,15 +139,67 @@ function checkPathSyntax(path, role, errors) {
   return normalized.path;
 }
 
-// Path safety, disk mode: syntactic rules, then realpath containment on EVERY
-// component. This is an integrity check for a single-tenant CI run, not an
-// absolute security guarantee: a TOCTOU window remains between realpath and
-// open. The file is read through the handle that was fstat-checked.
-export function resolveInsideRoots(rootDir, relPath, errors, role) {
+// Memory mode: a role path must sit under src/content/, an image under
+// assets/. This is a pure string rule on the normalised path, so it holds even
+// when no filesystem is involved.
+export function checkRoleRoot(normalizedPath, requiredRoot, role, errors) {
+  const root = requiredRoot.replace(/\/$/, '');
+  if (normalizedPath === root) {
+    errors.push('[path] ' + role + ': must be a file inside ' + requiredRoot + ', not the root itself');
+    return false;
+  }
+  if (!normalizedPath.startsWith(requiredRoot)) {
+    errors.push('[path] ' + role + ': ' + normalizedPath + ' must live under ' + requiredRoot);
+    return false;
+  }
+  return true;
+}
+
+// Disk mode containment. The package root is resolved once; each allowed root
+// is resolved too, and a root that is itself a symlink pointing outside the
+// package root is NOT trusted. This is an integrity check for a single-tenant
+// CI run, not an absolute security guarantee: a TOCTOU window remains between
+// realpath and open. The file is read through the handle that was fstat-checked.
+export function trustedRoots(rootDir, errors) {
+  let packageReal;
+  try {
+    packageReal = realpathSync(resolve(rootDir));
+  } catch (err) {
+    errors.push('[files] package root is not readable (' + err.code + ')');
+    return { packageReal: undefined, roots: {} };
+  }
+  const roots = {};
+  for (const root of ALLOWED_ROOTS) {
+    const trimmed = root.replace(/\/$/, '');
+    const lexical = resolve(packageReal, trimmed);
+    let real;
+    try {
+      real = realpathSync(lexical);
+    } catch {
+      // A root that does not exist is not an error on its own: assets/ may be
+      // absent when nothing references it.
+      roots[root] = null;
+      continue;
+    }
+    // If the root is a symlink (or contains a symlinked component) leading
+    // outside the package root, it must not be trusted as a containment base.
+    if (!(real === packageReal || real.startsWith(packageReal + sep))) {
+      errors.push('[files] ' + trimmed + ' resolves outside the package root and is not trusted');
+      roots[root] = null;
+      continue;
+    }
+    roots[root] = real;
+  }
+  return { packageReal, roots };
+}
+
+export function resolveInsideRoots(rootDir, relPath, errors, role, requiredRoot) {
   const syntactic = checkPathSyntax(relPath, role, errors);
   if (!syntactic) return undefined;
-  const absoluteRoot = realpathSync(resolve(rootDir));
-  const candidate = resolve(absoluteRoot, syntactic);
+  if (requiredRoot && !checkRoleRoot(syntactic, requiredRoot, role, errors)) return undefined;
+  const { packageReal, roots } = trustedRoots(rootDir, errors);
+  if (!packageReal) return undefined;
+  const candidate = resolve(packageReal, syntactic);
   let realCandidate;
   try {
     realCandidate = realpathSync(candidate);
@@ -143,14 +207,15 @@ export function resolveInsideRoots(rootDir, relPath, errors, role) {
     errors.push('[files] ' + role + ': ' + syntactic + ' is not readable (' + err.code + ')');
     return undefined;
   }
-  const allowed = ALLOWED_ROOTS.map((root) => {
-    try {
-      return realpathSync(resolve(absoluteRoot, root.replace(/\/$/, '')));
-    } catch {
-      return null;
-    }
-  }).filter(Boolean);
-  const contained = allowed.some((root) => realCandidate === root || realCandidate.startsWith(root + sep));
+  // The candidate must stay inside the package root whichever root it claims.
+  if (!(realCandidate === packageReal || realCandidate.startsWith(packageReal + sep))) {
+    errors.push('[files] ' + role + ': ' + syntactic + ' resolves outside the package root');
+    return undefined;
+  }
+  const bases = requiredRoot
+    ? [roots[requiredRoot]].filter(Boolean)
+    : Object.values(roots).filter(Boolean);
+  const contained = bases.some((base) => realCandidate === base || realCandidate.startsWith(base + sep));
   if (!contained) {
     errors.push('[files] ' + role + ': ' + syntactic + ' resolves outside the allowed roots');
     return undefined;
@@ -158,13 +223,14 @@ export function resolveInsideRoots(rootDir, relPath, errors, role) {
   return realCandidate;
 }
 
-function readFileSafely(absolutePath, role, errors) {
+function readFileSafely(absolutePath, role, errors, displayPath) {
+  const shown = displayPath ?? absolutePath;
   let fd;
   try {
     fd = openSync(absolutePath, 'r');
     const stats = fstatSync(fd);
     if (!stats.isFile()) {
-      errors.push('[files] ' + role + ': not a regular file');
+      errors.push('[files] ' + role + ': ' + shown + ' is not a regular file');
       return undefined;
     }
     const size = stats.size;
@@ -259,6 +325,90 @@ function gateLayer(records, gate, expectedResults, computedHash, schema) {
   return { valid: errors.length === 0, errors };
 }
 
+// Resolves the seven schema inputs that MUST enter the hash.
+//
+// Rules:
+//   - Exactly seven entries, one per fixed path under src/content/schema/.
+//   - A supplied path that is not one of the fixed paths is rejected; a caller
+//     cannot substitute a different file and still produce a valid package.
+//   - Missing or unreadable schemas are structured errors; no valid hash is
+//     produced for an incomplete package.
+// Order of precedence: files read from `options.diskRoot`, then explicitly
+// supplied `options.schemaFiles`, then the in-repo schemas (Node-only module).
+function resolveSchemaInputs(options, errors) {
+  const fromDisk = new Map();
+  if (options.diskRoot) {
+    for (const schemaPath of SCHEMA_PATHS) {
+      // Containment base is src/content/ (the trusted root); the fixed
+      // src/content/schema/ prefix is enforced by SCHEMA_PATHS membership.
+      const absolute = resolveInsideRoots(options.diskRoot, schemaPath, errors, 'schema', CONTENT_ROOT);
+      if (!absolute) continue;
+      const content = readFileSafely(absolute, 'schema', errors, schemaPath);
+      if (content !== undefined) fromDisk.set(schemaPath, content);
+    }
+  }
+
+  const supplied = Array.isArray(options.schemaFiles) ? options.schemaFiles : [];
+  const suppliedByPath = new Map();
+  if (options.schemaFiles !== undefined && !Array.isArray(options.schemaFiles)) {
+    errors.push('[hash] schemaFiles must be an array of {path, content}');
+  }
+  for (const entry of supplied) {
+    if (!entry || typeof entry.path !== 'string' || entry.content === undefined || entry.content === null) {
+      errors.push('[hash] every schema entry needs {path, content}');
+      continue;
+    }
+    const normalized = normalizeHashPath(entry.path);
+    if (!normalized.ok) {
+      errors.push('[hash] schema path rejected: ' + normalized.error);
+      continue;
+    }
+    if (!SCHEMA_PATHS.includes(normalized.path)) {
+      errors.push('[hash] schema path ' + normalized.path + ' is not one of the seven fixed schema paths');
+      continue;
+    }
+    if (suppliedByPath.has(normalized.path)) {
+      errors.push('[hash] duplicate schema entry: ' + normalized.path);
+      continue;
+    }
+    suppliedByPath.set(normalized.path, entry.content);
+  }
+
+  // When the caller supplies schemaFiles explicitly, that list is authoritative:
+  // a missing entry is an error, never silently filled from elsewhere. This is
+  // what makes "the package cannot be hashed without all seven schemas"
+  // testable and true.
+  const explicit = options.schemaFiles !== undefined;
+
+  const resolved = [];
+  for (const schemaPath of SCHEMA_PATHS) {
+    let content;
+    if (fromDisk.has(schemaPath)) content = fromDisk.get(schemaPath);
+    else if (explicit) content = suppliedByPath.get(schemaPath);
+    else content = readRepoSchema(schemaPath);
+    if (content === undefined || content === null) {
+      errors.push('[hash] schema ' + schemaPath + ' is required and could not be read');
+      continue;
+    }
+    resolved.push({ path: schemaPath, content });
+  }
+  if (resolved.length !== SCHEMA_PATHS.length) {
+    errors.push('[hash] the package cannot be hashed without all seven schemas');
+  }
+  return resolved;
+}
+
+// Reads one of the seven schemas from this repository. Used when neither a disk
+// root nor an explicit entry provides it. Missing files are reported, not
+// assumed.
+function readRepoSchema(schemaPath) {
+  try {
+    return readFileSync(new URL('../' + schemaPath.replace(/^src\//, ''), import.meta.url));
+  } catch {
+    return undefined;
+  }
+}
+
 // options:
 //   schemaFiles: [{path, content}] — the seven schema files, hashed too.
 //   diskRoot: repository root, enables realpath/containment/existence checks.
@@ -304,6 +454,12 @@ export function validateLessonPackage(bundle, options = {}) {
     }
     const normalized = checkPathSyntax(entry.path, role, errors);
     if (!normalized) continue;
+    // Memory-mode root enforcement: content roles must sit under src/content/.
+    // This must not depend on disk mode being enabled.
+    if (!checkRoleRoot(normalized, ROLE_ROOTS[role], role, errors)) {
+      declared.set(role, normalized);
+      continue;
+    }
     // Approval records live under src/content/ too, but no other role may sit
     // under an approval path: content must never hide from the hash.
     if (role !== 'approvals' && isApprovalRecordPath(normalized)) {
@@ -387,10 +543,36 @@ export function validateLessonPackage(bundle, options = {}) {
     if (imageSeen.has(normalized)) errors.push('[manifest] duplicate image path ' + JSON.stringify(normalized));
     imageSeen.add(normalized);
     if (byPath.has(normalized)) errors.push('[manifest] image path collides with role ' + byPath.get(normalized));
-    if (normalized.startsWith('src/content/')) errors.push('[manifest] images must live under assets/, not ' + normalized);
+    // Memory-mode image root: every image must live under assets/.
+    checkRoleRoot(normalized, IMAGE_ROOT, 'image', errors);
     if (image.content === undefined || image.content === null) {
       errors.push('[files] image ' + normalized + ' is missing content');
     }
+  }
+
+  // manifest.images and bundle.images must agree exactly (after normalisation):
+  // no missing, extra, or duplicated entries. A caller cannot supply a
+  // different image list and still pass.
+  const declaredImages = new Set();
+  if (Array.isArray(manifest?.images)) {
+    for (const declaredImage of manifest.images) {
+      if (typeof declaredImage !== 'string' || declaredImage.length === 0) {
+        errors.push('[manifest] every entry in images must be a non-empty string');
+        continue;
+      }
+      const normalizedDeclared = checkPathSyntax(declaredImage, 'image', errors);
+      if (!normalizedDeclared) continue;
+      if (declaredImages.has(normalizedDeclared)) errors.push('[manifest] duplicate image path in the manifest: ' + normalizedDeclared);
+      declaredImages.add(normalizedDeclared);
+    }
+  } else if (manifest !== undefined) {
+    errors.push('[manifest] images must be an array (use [] when there are none)');
+  }
+  for (const declaredImage of declaredImages) {
+    if (!imageSeen.has(declaredImage)) errors.push('[manifest] manifest image ' + declaredImage + ' was not supplied in the bundle');
+  }
+  for (const suppliedImage of imageSeen) {
+    if (!declaredImages.has(suppliedImage)) errors.push('[manifest] bundle image ' + suppliedImage + ' is not declared in the manifest');
   }
 
   // ---------------------------------------------------------------- step 1
@@ -592,10 +774,12 @@ export function validateLessonPackage(bundle, options = {}) {
 
   // ---------------------------------------------------------------- step 8
   // Hash: computed over the exact raw contents that were validated above.
-  const schemaFiles = Array.isArray(options.schemaFiles) ? options.schemaFiles : [];
-  if (options.schemaFiles !== undefined && schemaFiles.length !== SCHEMA_FILES.length) {
-    errors.push('[hash] the seven schema files must be supplied for hashing');
-  }
+  //
+  // The seven schemas are MANDATORY hash inputs. They are never taken from a
+  // free-form caller list: only the seven fixed paths under
+  // src/content/schema/ are accepted. When no root is available to read them
+  // from, the caller must supply them explicitly and the paths are re-checked.
+  const schemaFiles = resolveSchemaInputs(options, errors);
   const hashInputs = [];
   if (manifestEntry && typeof manifestEntry.path === 'string' && manifestEntry.content !== undefined) {
     hashInputs.push({ path: manifestEntry.path, content: manifestEntry.content });
@@ -612,13 +796,18 @@ export function validateLessonPackage(bundle, options = {}) {
     }
   }
   for (const schemaFile of schemaFiles) {
-    if (schemaFile && typeof schemaFile.path === 'string' && schemaFile.content !== undefined) {
-      hashInputs.push({ path: schemaFile.path, content: schemaFile.content });
-    }
+    hashInputs.push({ path: schemaFile.path, content: schemaFile.content });
   }
 
   let computedHash;
+  // An incomplete schema set must never yield a usable hash: the package cannot
+  // be bound to a version it does not fully define.
+  const schemasComplete = schemaFiles.length === SCHEMA_PATHS.length;
+  if (!schemasComplete) {
+    errors.push('[hash] no hash is produced for a package whose seven schemas are not all available');
+  }
   try {
+    if (!schemasComplete) throw new TypeError('schema set is incomplete');
     computedHash = computeVersionHash(hashInputs, { schemaVersion: SCHEMA_VERSION, hashAlgorithmVersion: HASH_ALGORITHM_VERSION });
     out.hash = computedHash;
   } catch (err) {
@@ -708,7 +897,13 @@ export function loadLessonPackageFromDisk(rootDir, manifestRelPath = MANIFEST_FI
     errors.push('[manifest] manifest must be ' + MANIFEST_FILENAME + ' at the package root');
     return { ok: false, errors };
   }
-  const manifestAbsolute = resolve(realpathSync(resolve(rootDir)), syntactic);
+  let packageReal;
+  try {
+    packageReal = realpathSync(resolve(rootDir));
+  } catch (err) {
+    return { ok: false, errors: ['[files] package root is not readable (' + err.code + ')'] };
+  }
+  const manifestAbsolute = resolve(packageReal, syntactic);
   let manifestContent;
   try {
     manifestContent = readFileSync(manifestAbsolute);
@@ -721,50 +916,54 @@ export function loadLessonPackageFromDisk(rootDir, manifestRelPath = MANIFEST_FI
   } catch (err) {
     return { ok: false, errors: ['[parse] manifest: content is not valid JSON (' + err.message + ')'] };
   }
-  const files = {};
-  const readRole = (role, relPath) => {
-    if (!relPath) return;
-    const absoluteRoot = realpathSync(resolve(rootDir));
-    const candidate = resolve(absoluteRoot, relPath);
-    let realCandidate;
-    try {
-      realCandidate = realpathSync(candidate);
-    } catch (err) {
-      errors.push('[files] ' + role + ': ' + relPath + ' is not readable (' + err.code + ')');
-      return;
-    }
-    const allowed = ALLOWED_ROOTS.map((root) => {
-      try {
-        return realpathSync(resolve(absoluteRoot, root.replace(/\/$/, '')));
-      } catch {
-        return null;
-      }
-    }).filter(Boolean);
-    const contained = allowed.some((root) => realCandidate === root || realCandidate.startsWith(root + sep));
-    if (!contained) {
-      errors.push('[files] ' + role + ': ' + relPath + ' resolves outside the allowed roots');
-      return;
-    }
-    const content = readFileSafely(realCandidate, role, errors);
-    if (content !== undefined) files[role] = { path: relPath, content };
+
+  // Every role path goes through the same checks: syntax, required root,
+  // trusted-root containment, single descriptor read.
+  const readWithRoot = (role, relPath, requiredRoot) => {
+    const absolute = resolveInsideRoots(rootDir, relPath, errors, role, requiredRoot);
+    if (!absolute) return undefined;
+    const content = readFileSafely(absolute, role, errors, relPath);
+    if (content === undefined) return undefined;
+    return { path: relPath, content };
   };
-  for (const [role, relPath] of Object.entries(manifest?.files ?? {})) readRole(role, relPath);
-  const images = [];
-  for (const imagePath of Array.isArray(manifest?.images) ? manifest.images : []) {
-    const absoluteRoot = realpathSync(resolve(rootDir));
-    let realCandidate;
-    try {
-      realCandidate = realpathSync(resolve(absoluteRoot, imagePath));
-    } catch (err) {
-      errors.push('[files] image: ' + imagePath + ' is not readable (' + err.code + ')');
+
+  const files = {};
+  for (const [role, relPath] of Object.entries(manifest?.files ?? {})) {
+    if (!relPath) continue;
+    const requiredRoot = ROLE_ROOTS[role];
+    if (!requiredRoot) {
+      errors.push('[manifest] unknown role ' + JSON.stringify(role));
       continue;
     }
-    const content = readFileSafely(realCandidate, 'image', errors);
-    if (content !== undefined) images.push({ path: imagePath, content });
+    const entry = readWithRoot(role, relPath, requiredRoot);
+    if (entry) files[role] = entry;
   }
+
+  // Images: root-checked BEFORE reading, so nothing outside assets/ is opened.
+  const images = [];
+  for (const imagePath of Array.isArray(manifest?.images) ? manifest.images : []) {
+    if (typeof imagePath !== 'string' || imagePath.length === 0) {
+      errors.push('[manifest] every entry in images must be a non-empty string');
+      continue;
+    }
+    const entry = readWithRoot('image', imagePath, IMAGE_ROOT);
+    if (entry) images.push(entry);
+  }
+
+  // The seven schemas are read as raw bytes so the disk loader can feed the
+  // same mandatory hash inputs.
+  const schemaFiles = [];
+  for (const schemaPath of SCHEMA_PATHS) {
+    // Containment base is src/content/; the fixed schema prefix is guaranteed
+    // by construction because SCHEMA_PATHS only contains src/content/schema/...
+    const entry = readWithRoot('schema', schemaPath, CONTENT_ROOT);
+    if (entry) schemaFiles.push(entry);
+  }
+
   return {
     ok: errors.length === 0,
     errors,
     bundle: { files, manifest: { path: manifestRelPath, content: manifestContent }, images },
+    options: { schemaFiles },
   };
 }
