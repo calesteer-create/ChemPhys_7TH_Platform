@@ -1,0 +1,14 @@
+[
+  {
+    "elementId": "l01-bad01",
+    "lessonId": "l01",
+    "elementType": "definition",
+    "referenceText": "وصف مرجعي افتراضي",
+    "sourceRefs": [{ "bookTitle": "كتاب افتراضي", "page": 10, "figureOrQuestionNo": null }],
+    "stageLocation": "understand",
+    "notebookLocation": null,
+    "verificationStatus": "uncovered",
+    "reviewNotes": "",
+    "subItems": []
+  }
+]

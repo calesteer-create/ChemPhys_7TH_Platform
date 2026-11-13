@@ -1,0 +1,44 @@
+[
+  {
+    "id": "l01-b01",
+    "lessonId": "l01",
+    "stageKey": "understand",
+    "kind": "book",
+    "blockType": "definition",
+    "bodyMarkdown": "نص افتراضي للاختبار فقط.",
+    "sourceRefs": [
+      { "bookTitle": "كتاب افتراضي", "page": 10, "figureOrQuestionNo": null },
+      { "bookTitle": "مرجع افتراضي ثانٍ", "page": 11, "figureOrQuestionNo": 1 }
+    ],
+    "figureId": null,
+    "equationId": null,
+    "coversElementIds": ["l01-e01"],
+    "order": 1
+  },
+  {
+    "id": "l01-b02",
+    "lessonId": "l01",
+    "stageKey": "apply",
+    "kind": "explanation",
+    "blockType": "narrative",
+    "bodyMarkdown": "شرح افتراضي للاختبار فقط.",
+    "sourceRefs": [],
+    "figureId": null,
+    "equationId": null,
+    "coversElementIds": ["l01-e01"],
+    "order": 2
+  },
+  {
+    "id": "l01-b03",
+    "lessonId": "l01",
+    "stageKey": "summary",
+    "kind": "enrichment",
+    "blockType": "note",
+    "bodyMarkdown": "إثراء افتراضي للاختبار فقط.",
+    "sourceRefs": [],
+    "figureId": null,
+    "equationId": null,
+    "coversElementIds": [],
+    "order": 3
+  }
+]

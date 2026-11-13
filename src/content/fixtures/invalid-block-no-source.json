@@ -1,0 +1,12 @@
+{
+  "id": "l01-bad01",
+  "lessonId": "l01",
+  "stageKey": "understand",
+  "kind": "book",
+  "blockType": "definition",
+  "bodyMarkdown": "نص افتراضي للاختبار فقط.",
+  "sourceRefs": [],
+  "figureId": null,
+  "equationId": null,
+  "order": 1
+}

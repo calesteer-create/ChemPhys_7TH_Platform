@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "QuizAndUnitAuthorization",
+  "description": "Task 004 foundation: lesson quizzes and unit quizzes. A unit-end quiz may only exist with an explicit UnitTestAuthorization from the project owner declaring the presented lesson is the last in the unit.",
+  "type": "object",
+  "required": ["quizzes"],
+  "properties": {
+    "quizzes": { "type": "array", "items": { "$ref": "#/$defs/Quiz" } },
+    "authorizations": { "type": "array", "items": { "$ref": "#/$defs/UnitTestAuthorization" } }
+  },
+  "$defs": {
+    "Quiz": {
+      "type": "object",
+      "required": ["id", "scope", "questions"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "scope": { "type": "string", "enum": ["lesson", "unit"] },
+        "lessonId": { "type": ["string", "null"] },
+        "unitId": { "type": ["string", "null"] },
+        "questions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "prompt"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "prompt": { "type": "string", "minLength": 1 },
+              "choices": { "type": "array", "items": { "type": "string" } },
+              "correctIndex": { "type": ["integer", "null"] },
+              "feedback": { "type": "string" },
+              "sourceRefs": { "type": "array" }
+            }
+          }
+        }
+      }
+    },
+    "UnitTestAuthorization": {
+      "type": "object",
+      "required": ["unitId", "lastLessonId", "authorizedBy", "authorizedAt"],
+      "properties": {
+        "unitId": { "type": "string", "minLength": 1 },
+        "lastLessonId": { "type": "string", "minLength": 1 },
+        "authorizedBy": { "type": "string", "minLength": 1 },
+        "authorizedAt": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

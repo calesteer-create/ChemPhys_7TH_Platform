@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ApprovalRecords",
+  "description": "Task 004 foundation: four separate approval gates. Automated tests, scientific review, notebook educational review, and owner approval are distinct records. Owner approval is bound to a specific versionHash and stored separately; PR merge, build success, and publishing are never owner approval.",
+  "type": "object",
+  "required": ["records"],
+  "properties": {
+    "records": { "type": "array", "items": { "$ref": "#/$defs/ApprovalRecord" } }
+  },
+  "$defs": {
+    "ApprovalRecord": {
+      "type": "object",
+      "required": ["lessonId", "gate", "versionHash", "result", "by", "at"],
+      "properties": {
+        "lessonId": { "type": "string", "minLength": 1 },
+        "gate": {
+          "type": "string",
+          "enum": ["A-automated", "B-scientific", "B-notebook-educational", "C-owner", "D-publishing"]
+        },
+        "versionHash": { "type": "string", "minLength": 1 },
+        "result": { "type": "string", "enum": ["pass", "fail", "approved", "rejected", "published"] },
+        "by": { "type": "string", "minLength": 1 },
+        "at": { "type": "string", "minLength": 1 },
+        "evidence": { "type": "string" },
+        "notes": { "type": "string" }
+      }
+    },
+    "VersionHashScope": {
+      "type": "object",
+      "description": "Authoritative scope for versionHash. Includes every content-affecting input; excludes approval records themselves so recording approval never changes the approved version.",
+      "properties": {
+        "includes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Lesson data, stages, notebook, coverage matrix, source records, images, figures, equations."
+        },
+        "excludes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Approval and consent records themselves."
+        }
+      }
+    }
+  }
+}

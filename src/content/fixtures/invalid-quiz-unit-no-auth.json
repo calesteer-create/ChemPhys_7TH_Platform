@@ -1,0 +1,21 @@
+{
+  "quizzes": [
+    {
+      "id": "u01-bad01",
+      "scope": "unit",
+      "lessonId": null,
+      "unitId": "u01",
+      "questions": [{ "id": "q1", "prompt": "سؤال افتراضي" }]
+    }
+  ],
+  "authorizations": [],
+  "units": [
+    {
+      "unitId": "u01",
+      "lessons": [
+        { "id": "l01", "order": 1 },
+        { "id": "l02", "order": 2 }
+      ]
+    }
+  ]
+}

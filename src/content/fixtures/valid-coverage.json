@@ -1,0 +1,35 @@
+[
+  {
+    "elementId": "l01-e01",
+    "lessonId": "l01",
+    "elementType": "law",
+    "referenceText": "وصف مرجعي افتراضي",
+    "sourceRefs": [{ "bookTitle": "كتاب افتراضي", "page": 12, "figureOrQuestionNo": null }],
+    "stageLocation": "understand",
+    "stageLocations": ["understand", "apply"],
+    "blockIds": ["l01-b01", "l01-b02"],
+    "notebookLocation": "laws",
+    "verificationStatus": "covered",
+    "reviewNotes": "",
+    "subItems": [
+      {
+        "subId": "l01-e01-s01",
+        "kind": "info",
+        "description": "وحدة افتراضية",
+        "stageLocation": "understand",
+        "notebookLocation": "laws",
+        "notebookRequired": true,
+        "verificationStatus": "covered"
+      },
+      {
+        "subId": "l01-e01-s02",
+        "kind": "skill",
+        "description": "مهارة افتراضية",
+        "stageLocation": "apply",
+        "notebookLocation": null,
+        "notebookRequired": false,
+        "verificationStatus": "covered"
+      }
+    ]
+  }
+]
