@@ -79,7 +79,7 @@ function contentBytes(path, content) {
 // sha256(path + NUL + bytes); the final hash covers the ordered list.
 // Throws TypeError on missing inputs or duplicate paths.
 export function computeVersionHash(files) {
-  if (!Array.isArray(files)) throw new TypeError('files must be an array');
+  if (!Array.isArray(files) || files.length === 0) throw new TypeError('files must be a non-empty array');
   for (const file of files) {
     if (!file || typeof file.path !== 'string' || file.path.length === 0) {
       throw new TypeError('every file must have a non-empty path');

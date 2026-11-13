@@ -12,18 +12,20 @@
     ],
     "figureId": null,
     "equationId": null,
+    "coversElementIds": ["l01-e01"],
     "order": 1
   },
   {
     "id": "l01-b02",
     "lessonId": "l01",
-    "stageKey": "understand",
+    "stageKey": "apply",
     "kind": "explanation",
     "blockType": "narrative",
     "bodyMarkdown": "شرح افتراضي للاختبار فقط.",
     "sourceRefs": [],
     "figureId": null,
     "equationId": null,
+    "coversElementIds": ["l01-e01"],
     "order": 2
   },
   {
@@ -36,6 +38,7 @@
     "sourceRefs": [],
     "figureId": null,
     "equationId": null,
+    "coversElementIds": [],
     "order": 3
   }
 ]

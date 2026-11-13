@@ -12,11 +12,11 @@ const load = (name) => JSON.parse(readFileSync(join(schemaDir, name), 'utf8'));
 const schemaFiles = readdirSync(schemaDir).filter((f) => f.endsWith('.json')).sort();
 
 test('all seven schema files exist and parse as JSON', () => {
-  assert.equal(schemaFiles.length, 7, `expected 7 schemas, found: ${schemaFiles.join(', ')}`);
+  assert.equal(schemaFiles.length, 7, 'expected 7 schemas, found: ' + schemaFiles.join(', '));
   for (const file of schemaFiles) {
     const schema = load(file);
-    assert.ok(typeof schema.title === 'string' && schema.title.length > 0, `${file}: title required`);
-    assert.ok(schema.$schema, `${file}: $schema required`);
+    assert.ok(typeof schema.title === 'string' && schema.title.length > 0, file + ': title required');
+    assert.ok(schema.$schema, file + ': $schema required');
   }
 });
 
@@ -39,6 +39,7 @@ test('content-block schema enforces kinds, stage keys, and multiple sources', ()
   assert.equal(schema.properties.sourceRefs.type, 'array');
   assert.ok(!('maxItems' in schema.properties.sourceRefs), 'no single-source cap allowed');
   assert.ok(schema.properties.bodyMarkdown, 'narrative Markdown body must exist');
+  assert.ok(schema.properties.coversElementIds, 'treatment back-reference must exist');
 });
 
 test('coverage schema enforces element, info, and skill levels', () => {
@@ -47,6 +48,8 @@ test('coverage schema enforces element, info, and skill levels', () => {
   assert.ok(item.required.includes('sourceRefs'));
   assert.equal(item.properties.sourceRefs.minItems, 1);
   assert.ok(item.properties.stageLocation.enum.includes('understand'));
+  assert.ok(item.properties.blockIds, 'treatment block linkage must exist');
+  assert.ok(item.properties.stageLocations, 'multi-stage locations must exist');
   const sub = schema.$defs.CoverageSubItem;
   assert.deepEqual([...sub.properties.kind.enum].sort(), ['info', 'skill']);
   assert.ok(sub.required.includes('notebookRequired'), 'conditional notebook flag must exist');
@@ -83,7 +86,7 @@ test('quiz schema enforces scope and unit authorization fields', () => {
   assert.deepEqual([...schema.$defs.Quiz.properties.scope.enum].sort(), ['lesson', 'unit']);
   const auth = schema.$defs.UnitTestAuthorization;
   for (const field of ['unitId', 'lastLessonId', 'authorizedBy', 'authorizedAt']) {
-    assert.ok(auth.required.includes(field), `authorization requires ${field}`);
+    assert.ok(auth.required.includes(field), 'authorization requires ' + field);
   }
 });
 
@@ -91,7 +94,7 @@ test('approval schema separates the four gates', () => {
   const schema = load('approval.schema.json');
   const gates = schema.$defs.ApprovalRecord.properties.gate.enum;
   for (const gate of ['A-automated', 'B-scientific', 'B-notebook-educational', 'C-owner', 'D-publishing']) {
-    assert.ok(gates.includes(gate), `missing gate: ${gate}`);
+    assert.ok(gates.includes(gate), 'missing gate: ' + gate);
   }
   assert.ok(schema.$defs.ApprovalRecord.required.includes('versionHash'));
   const scope = schema.$defs.VersionHashScope.properties;

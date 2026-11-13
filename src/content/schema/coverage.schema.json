@@ -34,6 +34,16 @@
           }
         },
         "stageLocation": { "type": "string", "enum": ["orient", "discover", "labOrActivity", "understand", "apply", "selfTest", "summary"] },
+        "stageLocations": {
+          "type": "array",
+          "description": "All stages where this element is treated. Multiple stages allowed; an element is not forced into a single stage.",
+          "items": { "type": "string", "enum": ["orient", "discover", "labOrActivity", "understand", "apply", "selfTest", "summary"] }
+        },
+        "blockIds": {
+          "type": "array",
+          "description": "Content blocks that actually treat this element. Required (>=1) when verificationStatus is covered or verified. Each block must back-reference this element via coversElementIds.",
+          "items": { "type": "string", "minLength": 1 }
+        },
         "notebookLocation": { "type": ["string", "null"] },
         "verificationStatus": { "type": "string", "enum": ["uncovered", "covered", "verified"] },
         "reviewNotes": { "type": "string" },

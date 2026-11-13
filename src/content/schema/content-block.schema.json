@@ -24,6 +24,11 @@
     },
     "figureId": { "type": ["string", "null"] },
     "equationId": { "type": ["string", "null"] },
+    "coversElementIds": {
+      "type": "array",
+      "description": "Coverage element ids this block actually treats. Back-reference proving treatment linkage; coverage blockIds must match.",
+      "items": { "type": "string", "minLength": 1 }
+    },
     "order": { "type": "integer", "minimum": 1 }
   },
   "$defs": {

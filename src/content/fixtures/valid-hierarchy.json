@@ -22,10 +22,10 @@
                     { "stageKey": "orient", "blockIds": [], "activityKind": null },
                     { "stageKey": "discover", "blockIds": [], "activityKind": null },
                     { "stageKey": "labOrActivity", "blockIds": [], "activityKind": "activity" },
-                    { "stageKey": "understand", "blockIds": [], "activityKind": null },
-                    { "stageKey": "apply", "blockIds": [], "activityKind": null },
+                    { "stageKey": "understand", "blockIds": ["l01-b01"], "activityKind": null },
+                    { "stageKey": "apply", "blockIds": ["l01-b02"], "activityKind": null },
                     { "stageKey": "selfTest", "blockIds": [], "activityKind": null },
-                    { "stageKey": "summary", "blockIds": [], "activityKind": null }
+                    { "stageKey": "summary", "blockIds": ["l01-b03"], "activityKind": null }
                   ]
                 }
               ]

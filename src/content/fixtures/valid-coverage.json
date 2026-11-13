@@ -6,6 +6,8 @@
     "referenceText": "وصف مرجعي افتراضي",
     "sourceRefs": [{ "bookTitle": "كتاب افتراضي", "page": 12, "figureOrQuestionNo": null }],
     "stageLocation": "understand",
+    "stageLocations": ["understand", "apply"],
+    "blockIds": ["l01-b01", "l01-b02"],
     "notebookLocation": "laws",
     "verificationStatus": "covered",
     "reviewNotes": "",

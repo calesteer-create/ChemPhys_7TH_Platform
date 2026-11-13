@@ -4,10 +4,13 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  createValidators,
+  loadSchemas,
   validateHierarchy,
   validateContentBlock,
   validateCoverage,
   validateSourcePrepGate,
+  validateLessonProfile,
   validateNotebook,
   validateQuiz,
   validateApprovalRecord,
@@ -15,6 +18,18 @@ import {
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const fixture = (name) => JSON.parse(readFileSync(join(root, 'src/content/fixtures', name), 'utf8'));
+
+test('changing a schema constraint changes validation results', () => {
+  const schemas = loadSchemas();
+  const block = fixture('valid-blocks.json')[0];
+  assert.equal(validateContentBlock(block).valid, true);
+  const mutated = structuredClone(schemas);
+  mutated.hierarchy.$defs.StageKey.enum = mutated.hierarchy.$defs.StageKey.enum.filter((k) => k !== 'understand');
+  const strict = createValidators(mutated);
+  const result = strict.validateContentBlock(block);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes('stageKey is invalid')));
+});
 
 test('valid hierarchy passes', () => {
   const result = validateHierarchy(fixture('valid-hierarchy.json'));
@@ -33,7 +48,7 @@ test('valid blocks pass, including multi-source book block', () => {
   const blocks = fixture('valid-blocks.json');
   for (const block of blocks) {
     const result = validateContentBlock(block);
-    assert.equal(result.valid, true, `${block.id}: ${result.errors.join('; ')}`);
+    assert.equal(result.valid, true, block.id + ': ' + result.errors.join('; '));
   }
   const bookBlock = blocks.find((b) => b.kind === 'book');
   assert.ok(bookBlock.sourceRefs.length >= 2, 'book block must carry multiple sources');
@@ -45,14 +60,14 @@ test('book block without source fails', () => {
   assert.ok(result.errors.some((e) => e.includes('at least one traceable source')));
 });
 
-test('valid coverage passes with no uncovered items', () => {
-  const result = validateCoverage(fixture('valid-coverage.json'));
+test('valid coverage passes with linked treatment blocks', () => {
+  const result = validateCoverage(fixture('valid-coverage.json'), fixture('valid-blocks.json'));
   assert.equal(result.valid, true, result.errors.join('; '));
   assert.deepEqual(result.uncovered, []);
 });
 
 test('coverage gap fails specifically because the element is uncovered', () => {
-  const result = validateCoverage(fixture('invalid-coverage-gap.json'));
+  const result = validateCoverage(fixture('invalid-coverage-gap.json'), fixture('valid-blocks.json'));
   assert.equal(result.valid, false);
   assert.ok(result.uncovered.includes('l01-bad01'));
   assert.ok(result.errors.some((e) => e.includes('uncovered') && e.includes('l01-bad01')));
@@ -60,6 +75,38 @@ test('coverage gap fails specifically because the element is uncovered', () => {
     !result.errors.some((e) => e.includes('traceable source')),
     'failure must be due to uncovered status, not a missing source',
   );
+});
+
+test('covered element without treatment blocks is rejected', () => {
+  const items = structuredClone(fixture('valid-coverage.json'));
+  items[0].blockIds = [];
+  const result = validateCoverage(items, fixture('valid-blocks.json'));
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes('at least one treatment block')));
+});
+
+test('covered element with missing block reference is rejected', () => {
+  const items = structuredClone(fixture('valid-coverage.json'));
+  items[0].blockIds = ['missing-block'];
+  const result = validateCoverage(items, fixture('valid-blocks.json'));
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes('references missing block')));
+});
+
+test('existing block that does not treat the element is rejected', () => {
+  const items = structuredClone(fixture('valid-coverage.json'));
+  items[0].blockIds = ['l01-b03'];
+  items[0].stageLocations = ['summary'];
+  const result = validateCoverage(items, fixture('valid-blocks.json'));
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes('does not treat this element')));
+});
+
+test('single element treated in multiple stages is accepted', () => {
+  const items = fixture('valid-coverage.json');
+  assert.deepEqual(items[0].stageLocations, ['understand', 'apply']);
+  const result = validateCoverage(items, fixture('valid-blocks.json'));
+  assert.equal(result.valid, true, result.errors.join('; '));
 });
 
 test('coverage without any source fails', () => {
@@ -72,10 +119,11 @@ test('coverage without any source fails', () => {
       sourceRefs: [],
       stageLocation: 'understand',
       verificationStatus: 'covered',
+      blockIds: ['l01-b01'],
       subItems: [],
     },
   ];
-  const result = validateCoverage(items);
+  const result = validateCoverage(items, fixture('valid-blocks.json'));
   assert.equal(result.valid, false);
   assert.ok(result.errors.some((e) => e.includes('traceable source')));
 });
@@ -94,11 +142,25 @@ test('orphan notebook item and missing required item fail', () => {
   assert.ok(result.errors.some((e) => e.includes('has no notebook item')));
 });
 
+test('lesson without laws is not rejected for missing laws', () => {
+  const profile = { lessonId: 'l01', hasLaws: false };
+  assert.equal(validateLessonProfile(profile).valid, true);
+  const data = fixture('valid-notebook.json');
+  const result = validateNotebook(data.notebook, data.subItems, profile);
+  assert.equal(result.valid, true, result.errors.join('; '));
+});
+
+test('invalid lesson profile fails', () => {
+  assert.equal(validateLessonProfile(null).valid, false);
+  assert.equal(validateLessonProfile({}).valid, false);
+  assert.equal(validateLessonProfile({ lessonId: 'l01', hasLaws: 'yes' }).valid, false);
+});
+
 test('lesson quiz and authorized unit quiz pass with verified last lesson', () => {
   const data = fixture('valid-quiz.json');
   for (const quiz of data.quizzes) {
     const result = validateQuiz(quiz, data.authorizations, data.units);
-    assert.equal(result.valid, true, `${quiz.id}: ${result.errors.join('; ')}`);
+    assert.equal(result.valid, true, quiz.id + ': ' + result.errors.join('; '));
   }
 });
 
@@ -131,6 +193,16 @@ test('clear sources with expected list do not block preparation', () => {
   assert.deepEqual(result.blockers, []);
 });
 
+test('non-essential unclear source does not block preparation', () => {
+  const pages = [
+    { pageNo: 1, clarityStatus: 'clear', essential: true, inspectedBy: 'x', inspectedAt: 'y' },
+    { pageNo: 2, clarityStatus: 'unclear', essential: false, inspectedBy: 'x', inspectedAt: 'y' },
+  ];
+  const result = validateSourcePrepGate(pages, [], { pages: [1], figures: [] });
+  assert.equal(result.blocked, false);
+  assert.deepEqual(result.blockers, []);
+});
+
 test('unclear essential source blocks preparation', () => {
   const data = fixture('invalid-sources-unclear.json');
   const result = validateSourcePrepGate(data.pages, data.figures, { pages: [10], figures: [] });
@@ -149,6 +221,39 @@ test('expected source without inspection record blocks preparation', () => {
   const result = validateSourcePrepGate(data.pages, data.figures, { pages: [10, 99], figures: [1] });
   assert.equal(result.blocked, true);
   assert.ok(result.blockers.some((b) => b.includes('page 99')));
+});
+
+test('coherent fictional lesson passes all validators together', () => {
+  const hierarchy = fixture('valid-hierarchy.json');
+  const blocks = fixture('valid-blocks.json');
+  const coverage = fixture('valid-coverage.json');
+  const sources = fixture('valid-sources.json');
+  const notebookData = fixture('valid-notebook.json');
+  const quizData = fixture('valid-quiz.json');
+
+  assert.equal(validateHierarchy(hierarchy).valid, true);
+  for (const block of blocks) assert.equal(validateContentBlock(block).valid, true);
+  assert.equal(validateCoverage(coverage, blocks).valid, true);
+  assert.equal(validateSourcePrepGate(sources.pages, sources.figures, { pages: [10], figures: [1] }).blocked, false);
+  assert.equal(validateNotebook(notebookData.notebook, notebookData.subItems, notebookData.profile).valid, true);
+  for (const quiz of quizData.quizzes) {
+    assert.equal(validateQuiz(quiz, quizData.authorizations, quizData.units).valid, true);
+  }
+
+  const lesson = hierarchy.grades[0].subjects[0].units[0].lessons[0];
+  const blockIds = new Set(blocks.map((b) => b.id));
+  for (const stage of lesson.stages) {
+    for (const blockId of stage.blockIds) {
+      assert.ok(blockIds.has(blockId), 'stage references existing block ' + blockId);
+    }
+  }
+  for (const item of coverage) {
+    for (const blockId of item.blockIds) {
+      const block = blocks.find((b) => b.id === blockId);
+      assert.ok(block.coversElementIds.includes(item.elementId));
+      assert.ok(item.stageLocations.includes(block.stageKey));
+    }
+  }
 });
 
 test('approval record binds to computed version hash', () => {
@@ -175,7 +280,8 @@ test('validators return errors instead of throwing on malformed input', () => {
     () => validateContentBlock({}),
     () => validateCoverage(null),
     () => validateCoverage([null]),
-    () => validateCoverage([{ elementId: 'x', subItems: [null] }]),
+    () => validateCoverage([{ elementId: 'x', subItems: [null] }], null),
+    () => validateLessonProfile(null),
     () => validateNotebook(null, null, null),
     () => validateNotebook({ lessonId: 'l01', sections: [null] }, null, null),
     () => validateNotebook({ lessonId: 'l01', sections: [{ sectionType: 'laws', items: [null] }] }, [], null),

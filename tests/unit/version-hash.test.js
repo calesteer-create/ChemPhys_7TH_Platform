@@ -74,8 +74,10 @@ test('exclusion is precise: content files mentioning approval are included', () 
   assert.notEqual(base, withContent, 'content file must affect the hash');
 });
 
-test('missing inputs throw a clear error', () => {
+test('empty or invalid file lists are rejected', () => {
+  assert.throws(() => computeVersionHash([]), TypeError);
   assert.throws(() => computeVersionHash(null), TypeError);
+  assert.throws(() => computeVersionHash(undefined), TypeError);
   assert.throws(() => computeVersionHash([{ path: 'a.json' }]), TypeError);
   assert.throws(() => computeVersionHash([{ content: '{}' }]), TypeError);
 });
@@ -108,7 +110,7 @@ test('canonicalize makes key order irrelevant', () => {
 
 test('hash scope covers all content inputs and excludes approvals', () => {
   for (const item of ['lesson data', 'stages', 'notebook', 'coverage matrix', 'source records', 'images', 'figures', 'equations']) {
-    assert.ok(VERSION_HASH_INCLUDES.includes(item), `missing include: ${item}`);
+    assert.ok(VERSION_HASH_INCLUDES.includes(item), 'missing include: ' + item);
   }
   assert.ok(VERSION_HASH_EXCLUDES.includes('approval records'));
   assert.ok(VERSION_HASH_EXCLUDES.includes('owner approvals'));
